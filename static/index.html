@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAGE — Local Multi-Model Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo-icon">🌿</div>
+                <div>
+                    <h1>SAGE</h1>
+                    <p class="subtitle">Sequential Multi-Model Local Agent Orchestrator</p>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="model-badge" id="statusBadge">
+                    <span class="status-dot online"></span>
+                    <span id="currentModelLabel">System Ready</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Layout -->
+        <main class="main-layout">
+            <!-- Chat Container -->
+            <section class="chat-section">
+                <div class="chat-history" id="chatHistory">
+                    <div class="welcome-card">
+                        <h3>Welcome to SAGE</h3>
+                        <p>Three local models cooperating on genuine tasks through sequential orchestration:</p>
+                        <div class="model-grid-summary">
+                            <div class="summary-card">
+                                <strong>🧠 Gemma 4B</strong>
+                                <span>Agent Controller & Tool Reasoner</span>
+                            </div>
+                            <div class="summary-card">
+                                <strong>📄 Qwen3-VL 4B</strong>
+                                <span>Document Analyzer & Multimodal OCR</span>
+                            </div>
+                            <div class="summary-card">
+                                <strong>💻 Qwen2.5-Coder 7B</strong>
+                                <span>Code Generation & Review Specialist</span>
+                            </div>
+                        </div>
+                        <p class="hint">Attach a PDF, DOCX, image, or text file, or type an objective below.</p>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-container">
+                    <!-- Attachments Preview Area -->
+                    <div class="attachments-tray" id="attachmentsTray" style="display: none;"></div>
+
+                    <!-- Drop Zone Overlay (Hidden until drag) -->
+                    <div class="drop-zone-overlay" id="dropZoneOverlay">
+                        <div class="drop-zone-content">
+                            <span>📁 Drop files here to attach to SAGE</span>
+                        </div>
+                    </div>
+
+                    <!-- Input Bar -->
+                    <div class="input-bar">
+                        <input type="file" id="fileInput" multiple style="display: none;">
+                        <button type="button" class="btn-icon" id="attachBtn" title="Attach Files (PDF, DOCX, Images, Text)">
+                            📎
+                        </button>
+                        <textarea 
+                            id="promptInput" 
+                            rows="2" 
+                            placeholder="Enter your task or ask SAGE to analyze documents / write code... (Paste images directly with Ctrl+V)"
+                        ></textarea>
+                        <button type="button" class="btn-send" id="sendBtn">
+                            <span>Send</span>
+                            <span class="send-icon">➤</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trace & Telemetry Sidebar -->
+            <aside class="trace-section" id="traceSidebar">
+                <div class="trace-header">
+                    <h2>🔍 Agent Trace & Telemetry</h2>
+                </div>
+
+                <!-- Telemetry Stats -->
+                <div class="telemetry-card" id="telemetryCard" style="display: none;">
+                    <div class="telemetry-title">Latest Run Metrics</div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <span class="metric-label">Agent Calls:</span>
+                            <span class="metric-val" id="metricAgentCalls">0</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Doc Analyzer:</span>
+                            <span class="metric-val" id="metricDocCalls">0</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Coder Calls:</span>
+                            <span class="metric-val" id="metricCoderCalls">0</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Model Switches:</span>
+                            <span class="metric-val" id="metricSwitches">0</span>
+                        </div>
+                        <div class="metric-item full-width">
+                            <span class="metric-label">Total Wall Time:</span>
+                            <span class="metric-val highlight" id="metricWallTime">0.00s</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trace Events Stream -->
+                <div class="trace-timeline" id="traceTimeline">
+                    <div class="trace-empty">Execution steps and model switches will appear here in real-time.</div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
