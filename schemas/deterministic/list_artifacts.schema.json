@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/list_artifacts.schema.json",
+  "title": "ListArtifactsSocket",
+  "description": "Rich output socket for enumerating document artifacts from canonical manifest",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "list_artifacts"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "total_in_document": { "type": "integer", "minimum": 0 },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["element_id", "type", "order"],
+            "additionalProperties": false,
+            "properties": {
+              "element_id": { "type": "string" },
+              "type": { "type": "string" },
+              "subtype": { "type": ["string", "null"] },
+              "order": { "type": "integer", "minimum": 0 },
+              "page": { "type": ["integer", "null"], "minimum": 1 },
+              "slide": { "type": ["integer", "null"], "minimum": 1 },
+              "sheet": { "type": ["string", "null"] },
+              "bbox": {
+                "oneOf": [
+                  { "type": "null" },
+                  { "$ref": "common.schema.json#/$defs/BoundingBox" }
+                ]
+              },
+              "heading": { "type": ["string", "null"] },
+              "caption": { "type": ["string", "null"] },
+              "link_count": { "type": "integer", "minimum": 0 },
+              "ref": { "type": ["string", "null"] },
+              "exists": { "type": "boolean" },
+              "derived_available": { "type": "boolean" }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "artifact_type_filter": { "type": ["string", "null"] },
+        "deterministic_sort": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "identity", "context", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["doc_id", "count", "total_in_document", "artifacts"]
+          },
+          "identity": {
+            "required": ["doc_id"]
+          },
+          "context": {
+            "required": ["doc_id", "deterministic_sort"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

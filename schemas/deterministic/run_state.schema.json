@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/run_state.schema.json",
+  "title": "RunStateSocket",
+  "description": "Rich output socket for backend-owned runtime execution state and tool call records",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "context",
+    "references",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["active", "completed", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "run_state_snapshot"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "request_id",
+        "loop_index",
+        "document_count",
+        "tool_call_count"
+      ],
+      "properties": {
+        "run_id": { "type": "string" },
+        "request_id": { "type": "string" },
+        "loop_index": { "type": "integer", "minimum": 0 },
+        "document_count": { "type": "integer", "minimum": 0 },
+        "tool_call_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["run_id", "request_id"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["user_text", "loop_index"],
+      "properties": {
+        "user_text": { "type": "string" },
+        "current_model": { "type": ["string", "null"] },
+        "loop_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "required": ["registered_documents", "tool_calls"],
+      "properties": {
+        "registered_documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["doc_id", "display_name"],
+            "properties": {
+              "doc_id": { "type": "string" },
+              "display_name": { "type": "string" },
+              "file_type": { "type": ["string", "null"] },
+              "source_name": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["call_id", "tool_name", "function_name", "status"],
+            "properties": {
+              "call_id": { "type": "string" },
+              "tool_name": { "type": "string" },
+              "function_name": { "type": "string" },
+              "status": { "type": "string" },
+              "start_time": { "type": "number", "minimum": 0 },
+              "end_time": { "type": "number", "minimum": 0 },
+              "duration_ms": { "type": "number", "minimum": 0 },
+              "sanitized_args": { "type": "object" },
+              "result_summary": { "type": ["string", "null"] },
+              "error": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["active", "completed"] } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

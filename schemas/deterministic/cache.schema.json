@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/cache.schema.json",
+  "title": "CacheOperationSocket (DerivedAnalysisCache)",
+  "description": "Compatibility alias for derived_analysis_cache.schema.json, accurately scoped to derived image-analysis persistence",
+  "$ref": "derived_analysis_cache.schema.json"
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/math.schema.json",
+  "title": "SafeMathEngineSocket",
+  "description": "Rich output socket for AST-based safe mathematical evaluation",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "execution",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "calculate"
+    },
+    "result": {
+      "type": "object",
+      "required": ["expression"],
+      "properties": {
+        "expression": { "type": "string" },
+        "value": { "type": ["number", "null"] },
+        "value_type": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "engine",
+        "unrestricted_eval_used",
+        "operators_used",
+        "functions_used",
+        "constants_used"
+      ],
+      "properties": {
+        "engine": { "type": "string", "const": "safe_ast" },
+        "unrestricted_eval_used": { "type": "boolean", "const": false },
+        "operators_used": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "functions_used": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "constants_used": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["expression", "value", "value_type"],
+            "properties": {
+              "value": { "type": "number" },
+              "value_type": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

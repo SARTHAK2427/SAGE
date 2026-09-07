@@ -1,0 +1,63 @@
+{
+  "native": [
+    "understand user intent",
+    "reason and plan",
+    "decide tool usage",
+    "interpret tool results",
+    "synthesize and compare evidence",
+    "write, explain, and summarize",
+    "decide when enough evidence exists",
+    "produce the final answer"
+  ],
+  "delegated": [
+    {
+      "capability": "deterministic arithmetic",
+      "tool": "math",
+      "function": "calculate",
+      "when": "Any arithmetic or mathematical expression requiring an exact numeric result."
+    },
+    {
+      "capability": "semantic document retrieval",
+      "tool": "document_database",
+      "function": "rag_search",
+      "when": "Looking for conceptually related content in uploaded documents."
+    },
+    {
+      "capability": "literal string / identifier / number / regex search",
+      "tool": "document_database",
+      "function": "exact_search",
+      "when": "Searching for a known exact string, code, identifier, or numeric value in documents."
+    },
+    {
+      "capability": "fetch specific known artifact",
+      "tool": "document_database",
+      "function": "artifact_fetch",
+      "when": "A specific element_id is known and the full artifact content is needed."
+    },
+    {
+      "capability": "discover available document artifacts",
+      "tool": "document_database",
+      "function": "list_artifacts",
+      "when": "Enumerating images, tables, or other artifacts in a document, especially when RAG may not surface them."
+    },
+    {
+      "capability": "image reading and visual understanding",
+      "tool": "vision_ocr",
+      "function": "analyze_image",
+      "when": "Actual image content must be read, transcribed, or visually analyzed."
+    },
+    {
+      "capability": "code generation, debugging, refactoring, or translation",
+      "tool": "code_specialist",
+      "function": "solve_code_task",
+      "when": "Substantial coding work is required that benefits from a dedicated coding model."
+    }
+  ],
+  "not_available": [
+    "generic filesystem access",
+    "arbitrary document ingestion",
+    "large_document_analysis specialist",
+    "embedding or Chroma tools",
+    "any tool not listed in tools.json"
+  ]
+}

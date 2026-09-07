@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/rag_search.schema.json",
+  "title": "RagSearchSocket",
+  "description": "Rich output socket for semantic vector search over sage_source and sage_derived",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "rag_search"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "limit_hit": { "type": "boolean" },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "record_id",
+              "origin",
+              "record_type",
+              "text",
+              "distance",
+              "raw_distance",
+              "derived_cosine_similarity",
+              "derived_similarity",
+              "doc_id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "record_id": { "type": "string", "minLength": 1 },
+              "origin": { "type": "string", "enum": ["source", "derived"] },
+              "record_type": { "type": "string" },
+              "text": { "type": "string" },
+              "distance": { "type": "number" },
+              "raw_distance": { "type": "number", "minimum": 0.0 },
+              "derived_cosine_similarity": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+              "derived_similarity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+              "doc_id": { "type": "string" },
+              "page": { "type": ["integer", "null"], "minimum": 1 },
+              "source_element_ids": { "type": "array", "items": { "type": "string" } },
+              "image_refs": { "type": "array", "items": { "type": "string" } },
+              "table_refs": { "type": "array", "items": { "type": "string" } },
+              "code_refs": { "type": "array", "items": { "type": "string" } },
+              "derived_cache_ref": { "type": ["string", "null"] }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "requested_top_k": { "type": "integer", "minimum": 1 },
+        "doc_ids_filter": { "type": ["array", "null"], "items": { "type": "string" } },
+        "include_source": { "type": "boolean" },
+        "include_derived": { "type": "boolean" },
+        "collections_queried": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["embedding_model", "distance_metric", "similarity_formula"],
+      "properties": {
+        "embedding_model": { "type": "string" },
+        "distance_metric": { "type": "string", "const": "cosine" },
+        "similarity_formula": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "context", "execution", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["query", "count", "limit_hit", "records"]
+          },
+          "context": {
+            "required": ["query", "requested_top_k", "collections_queried"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

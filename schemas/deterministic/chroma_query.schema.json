@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/chroma_query.schema.json",
+  "title": "ChromaQuerySocket",
+  "description": "Rich output socket for low-level Chroma query operations across sage_source and sage_derived",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "chroma_query"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "returned_count": { "type": "integer", "minimum": 0 },
+        "collection_responses": {
+          "type": "object",
+          "description": "SAGE-normalized responses indexed by collection name",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "ids": { "type": "array" },
+              "distances": { "type": "array" },
+              "metadatas": { "type": "array" },
+              "documents": { "type": "array" },
+              "error": { "type": "string" }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "collections_queried": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "query_count": { "type": "integer", "minimum": 1 },
+        "requested_top_k": { "type": "integer", "minimum": 1 },
+        "where_filter": { "type": ["object", "null"] },
+        "include_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw": {
+      "type": "object",
+      "description": "Opaque underlying raw response direct from chromadb client library",
+      "properties": {
+        "raw_chroma_responses": { "type": "object" }
+      }
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "context", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["returned_count", "collection_responses"]
+          },
+          "context": {
+            "required": ["collections_queried", "query_count", "requested_top_k", "include_fields"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

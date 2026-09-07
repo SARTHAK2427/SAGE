@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/sandbox_execution.schema.json",
+  "title": "SandboxExecutionSocket",
+  "description": "Rich output socket for Docker sandbox Python code execution",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "execution",
+    "storage",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "infra_error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "sandbox_execution"
+    },
+    "result": {
+      "type": "object",
+      "required": ["stdout", "stderr", "exit_code", "timed_out", "succeeded"],
+      "properties": {
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "succeeded": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "execution_id": { "type": "string" },
+        "code_hash": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "container_image",
+        "network",
+        "read_only_mount",
+        "cap_drop",
+        "pids_limit",
+        "memory_limit_mb",
+        "cpu_cores",
+        "timeout_seconds",
+        "working_dir"
+      ],
+      "properties": {
+        "container_image": { "type": "string" },
+        "network": { "type": "string", "const": "none" },
+        "read_only_mount": { "type": "boolean", "const": true },
+        "cap_drop": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "security_opt": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pids_limit": { "type": "integer", "minimum": 1 },
+        "memory_limit_mb": { "type": "integer", "minimum": 1 },
+        "cpu_cores": { "type": "number", "minimum": 0.1 },
+        "timeout_seconds": { "type": "number", "minimum": 0.1 },
+        "working_dir": { "type": "string" },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "required": ["container_removed", "temp_cleaned", "host_filesystem_isolated"],
+      "properties": {
+        "container_removed": { "type": "boolean" },
+        "temp_cleaned": { "type": "boolean" },
+        "host_filesystem_isolated": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "properties": {
+              "succeeded": { "const": true },
+              "exit_code": { "const": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["error", "timeout", "infra_error"] } } },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "succeeded": { "const": false }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

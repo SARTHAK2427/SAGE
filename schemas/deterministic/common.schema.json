@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/common.schema.json",
+  "title": "SAGE Common Deterministic Definitions",
+  "description": "Shared canonical definitions for deterministic SAGE components (Error, Timing, Warnings, Visibility, Provenance).",
+  "$defs": {
+    "Error": {
+      "type": "object",
+      "description": "Standard structured machine-readable error representation. Never empty on failure.",
+      "required": ["code", "type", "message", "recoverable", "retryable"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable machine-readable error code (e.g. ELEMENT_NOT_FOUND, TIMEOUT, SYNTAX_ERROR)"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Python exception class or logical error type name"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable explanation of the error"
+        },
+        "recoverable": {
+          "type": "boolean",
+          "description": "Whether the system or an agent can attempt a recovery strategy"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "Whether an immediate retry of the same deterministic call might succeed"
+        },
+        "details": {
+          "type": "object",
+          "description": "Structured contextual error parameters (not traceback)"
+        },
+        "debug": {
+          "type": "object",
+          "description": "Internal diagnostic information for logs only (traceback, file, function)",
+          "properties": {
+            "traceback": { "type": "string" },
+            "source_file": { "type": "string" },
+            "source_function": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "Timing": {
+      "type": "object",
+      "description": "Execution timing payload with ISO-8601 timestamps and non-negative durations.",
+      "required": ["started_at", "finished_at", "duration_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC ISO-8601 start timestamp"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC ISO-8601 finish timestamp"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total elapsed duration in milliseconds"
+        },
+        "stages": {
+          "type": "object",
+          "description": "Sub-stage duration breakdown in milliseconds",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+
+    "Warnings": {
+      "type": "array",
+      "description": "Non-fatal warnings emitted during deterministic execution.",
+      "items": { "type": "string" }
+    },
+
+    "VisibilityMapping": {
+      "type": "object",
+      "description": "Data classification tags mapping field names to consumer visibility rules.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "SAFE_FOR_AGENT",
+          "SAFE_FOR_UI",
+          "INTERNAL_ONLY",
+          "LOG_ONLY",
+          "PERSISTENCE_ONLY"
+        ]
+      }
+    },
+
+    "BoundingBox": {
+      "type": "array",
+      "description": "Normalized or absolute spatial bounding box coordinates [x0, y0, x1, y1].",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+
+    "Provenance": {
+      "type": "object",
+      "description": "Canonical provenance information tracing back to source documents and elements.",
+      "required": ["doc_id"],
+      "additionalProperties": false,
+      "properties": {
+        "doc_id": { "type": "string", "minLength": 1 },
+        "source_path": { "type": "string" },
+        "sha256": { "type": "string" },
+        "element_id": { "type": "string" },
+        "order": { "type": "integer", "minimum": 0 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "slide": { "type": ["integer", "null"], "minimum": 1 },
+        "sheet": { "type": ["string", "null"] },
+        "bbox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/BoundingBox" }
+          ]
+        }
+      }
+    }
+  }
+}

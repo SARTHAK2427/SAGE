@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/json_repair.schema.json",
+  "title": "JsonParseRepairSocket",
+  "description": "Rich output socket for JSON parsing, isolation, and repair of noisy agent model outputs",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "context",
+    "raw",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "repaired", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "json_parse_repair"
+    },
+    "result": {
+      "type": "object",
+      "required": ["is_valid", "parsed_type"],
+      "properties": {
+        "is_valid": { "type": "boolean" },
+        "parsed_type": { "type": "string" },
+        "parsed_json": {
+          "description": "Parsed Python object/dict/list/primitive from repaired candidate string or null on error"
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["repair_applied", "steps"],
+      "properties": {
+        "repair_applied": { "type": "boolean" },
+        "steps": {
+          "type": "object",
+          "required": [
+            "thought_tags_stripped",
+            "markdown_fence_extracted",
+            "outermost_braces_extracted"
+          ],
+          "properties": {
+            "thought_tags_stripped": { "type": "boolean" },
+            "markdown_fence_extracted": { "type": "boolean" },
+            "outermost_braces_extracted": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw": {
+      "type": "object",
+      "required": ["raw_input", "raw_length"],
+      "properties": {
+        "raw_input": { "type": "string" },
+        "raw_length": { "type": "integer", "minimum": 0 },
+        "repaired_string": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["success", "repaired"] } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "properties": {
+              "is_valid": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "is_valid": { "const": false }
+            }
+          },
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

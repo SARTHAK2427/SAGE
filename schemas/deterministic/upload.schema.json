@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/upload.schema.json",
+  "title": "BackendFileUploadSocket",
+  "description": "Rich output socket for uploaded file handling and DocumentDB registration",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "storage",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "backend_file_upload"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "ref": { "type": "string" },
+        "doc_id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["request_id", "doc_id", "original_filename", "safe_filename"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1 },
+        "doc_id": { "type": "string", "minLength": 1 },
+        "original_filename": { "type": "string" },
+        "safe_filename": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "required": ["temp_path", "file_ref"],
+      "properties": {
+        "temp_path": { "type": "string" },
+        "file_ref": { "type": "string" },
+        "visibility_mapping": {
+          "$ref": "common.schema.json#/$defs/VisibilityMapping"
+        }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "properties": {
+        "ingestion_socket": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "ingestion.schema.json" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["ref", "doc_id", "name", "type", "size"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/embedding.schema.json",
+  "title": "EmbeddingSocket",
+  "description": "Rich output socket for deterministic embedding operations via SentenceTransformer",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "embedding"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "vector_count": { "type": "integer", "minimum": 0 },
+        "dimension": { "type": "integer", "minimum": 1 },
+        "output_shape": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "vectors": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "number" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "model_name": { "type": "string" },
+        "device": { "type": "string" },
+        "dimension": { "type": "integer", "minimum": 1 },
+        "dtype": { "type": "string" },
+        "is_mock": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "input_count": { "type": "integer", "minimum": 0 },
+        "approx_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "batch_size": { "type": "integer", "minimum": 1 },
+        "normalize_embeddings": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "identity", "context", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["vector_count", "dimension", "output_shape", "vectors"]
+          },
+          "identity": {
+            "required": ["model_name", "device", "dimension", "dtype", "is_mock"]
+          },
+          "context": {
+            "required": ["input_count", "batch_size", "normalize_embeddings"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

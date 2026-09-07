@@ -1,0 +1,215 @@
+{
+  "tools": [
+    {
+      "name": "document_database",
+      "description": "Search and fetch information from registered uploaded documents.",
+      "functions": [
+        {
+          "name": "rag_search",
+          "description": "Semantic search over document knowledge. Returns multiple ranked matches; all are forwarded as evidence.",
+          "arguments": {
+            "query":   {"type": "string",  "required": true},
+            "top_k":   {"type": "integer", "required": false},
+            "doc_ids": {"type": "array",   "items": {"type": "string"}, "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Multiple ranked matches in original retrieval order; all matches forwarded as evidence.",
+            "properties": {
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {"type": "string"},
+                    "doc_id": {"type": "string"},
+                    "element_id": {"type": "string", "description": "Reusable in artifact_fetch"},
+                    "element_type": {"type": "string"},
+                    "raw_distance": {"type": "number"},
+                    "cosine_similarity": {"type": "number"},
+                    "source": {"type": "string", "enum": ["canonical", "derived"]},
+                    "page": {"type": ["integer", "null"]},
+                    "image_refs": {"type": "array", "items": {"type": "string"}, "description": "Reusable in vision_ocr/analyze_image"}
+                  }
+                }
+              },
+              "returned": {"type": "integer"},
+              "top_k": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "exact_search",
+          "description": "Literal string, identifier, number, or regex search over canonical document text.",
+          "arguments": {
+            "query":          {"type": "string",  "required": true},
+            "regex":          {"type": "boolean", "required": false},
+            "case_sensitive": {"type": "boolean", "required": false},
+            "doc_ids":        {"type": "array",   "items": {"type": "string"}, "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Exact text matches with surrounding context and offsets.",
+            "properties": {
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "doc_id": {"type": "string"},
+                    "element_id": {"type": "string", "description": "Reusable in artifact_fetch"},
+                    "element_type": {"type": "string"},
+                    "matched_text": {"type": "string"},
+                    "context": {"type": "string"},
+                    "page": {"type": ["integer", "null"]},
+                    "start_offset": {"type": "integer"},
+                    "end_offset": {"type": "integer"},
+                    "table_row": {"type": ["integer", "null"]},
+                    "table_col": {"type": ["integer", "null"]}
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "artifact_fetch",
+          "description": "Fetch a specific known artifact (text, table, code, or image) by its element_id.",
+          "arguments": {
+            "doc_id":     {"type": "string", "required": true},
+            "element_id": {"type": "string", "required": true}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Typed artifact object based on element kind.",
+            "properties": {
+              "artifact": {
+                "type": "object",
+                "properties": {
+                  "doc_id": {"type": "string"},
+                  "element_id": {"type": "string"},
+                  "type": {"type": "string", "enum": ["text", "table", "code", "image"]},
+                  "page": {"type": ["integer", "null"]},
+                  "text": {"type": "string", "description": "Present for text"},
+                  "rows": {"type": "array", "description": "Present for table"},
+                  "headers": {"type": "array", "description": "Optional for table"},
+                  "markdown": {"type": "string", "description": "Optional for table"},
+                  "code": {"type": "string", "description": "Present for code"},
+                  "language": {"type": "string", "description": "Optional for code"},
+                  "image_id": {"type": "string", "description": "Present for image; reusable in vision_ocr/analyze_image"},
+                  "image_ref": {"type": "string", "description": "Optional registered reference"},
+                  "caption": {"type": "string", "description": "Optional image caption"},
+                  "derived_available": {"type": "boolean", "description": "True if cached vision analysis exists"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "list_artifacts",
+          "description": "List all artifacts in a document, optionally filtered by type. Useful for discovering images or tables not surfaced by RAG.",
+          "arguments": {
+            "doc_id": {"type": "string",            "required": true},
+            "type":   {"type": ["string", "null"],  "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Lightweight inventory of document artifacts.",
+            "properties": {
+              "artifacts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "element_id": {"type": "string", "description": "Reusable in artifact_fetch or vision_ocr/analyze_image"},
+                    "type": {"type": "string"},
+                    "order": {"type": "integer"},
+                    "page": {"type": ["integer", "null"]},
+                    "caption": {"type": ["string", "null"]},
+                    "heading": {"type": ["string", "null"]},
+                    "derived_available": {"type": ["boolean", "null"]}
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "vision_ocr",
+      "description": "Read, transcribe, and analyze image content using a vision model.",
+      "functions": [
+        {
+          "name": "analyze_image",
+          "description": "Perform OCR, visual understanding, or combined OCR + analysis on a registered image.",
+          "arguments": {
+            "instruction": {"type": "string",           "required": true},
+            "doc_id":      {"type": ["string", "null"], "required": false},
+            "image_id":    {"type": "string",           "required": true},
+            "image_ref":   {"type": ["string", "null"], "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Vision analysis or OCR transcription produced by Qwen-VL.",
+            "properties": {
+              "doc_id": {"type": "string"},
+              "image_id": {"type": "string"},
+              "analysis": {"type": "string", "description": "Plain text analysis / OCR transcription"},
+              "derived_analysis_id": {"type": "string", "description": "Optional cached analysis reference"}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "code_specialist",
+      "description": "Delegate substantial code generation, debugging, transformation, or refactoring to a coding specialist model.",
+      "functions": [
+        {
+          "name": "solve_code_task",
+          "description": "Generate, complete, fix, refactor, or translate code as described in the instruction.",
+          "arguments": {
+            "instruction": {"type": "string",           "required": true},
+            "code":        {"type": ["string", "null"], "required": false},
+            "language":    {"type": ["string", "null"], "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Code specialist execution summary and code output.",
+            "properties": {
+              "code": {"type": "string", "description": "Generated or modified code"},
+              "language": {"type": "string", "description": "Target language"},
+              "execution_status": {"type": "string", "enum": ["success", "error", "not_executed"]},
+              "stdout": {"type": "string", "description": "Standard output if executed"},
+              "stderr": {"type": "string", "description": "Standard error if execution failed"},
+              "exit_code": {"type": "integer", "description": "Process exit code if executed"},
+              "attempts_used": {"type": "integer", "description": "Number of repair attempts used"}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "math",
+      "description": "Evaluate deterministic arithmetic and mathematical expressions.",
+      "functions": [
+        {
+          "name": "calculate",
+          "description": "Compute a mathematical expression and return the exact numeric result.",
+          "arguments": {
+            "expression": {"type": "string", "required": true}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Deterministic arithmetic result.",
+            "properties": {
+              "expression": {"type": "string"},
+              "value": {"type": ["number", "null"], "description": "Exact evaluated numeric result"}
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

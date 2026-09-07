@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/repair_loop.schema.json",
+  "title": "CodeRepairLoopSocket",
+  "description": "Rich output socket for code execution and iterative auto-repair lifecycle preserving complete attempt history and sandbox telemetry",
+  "type": "object",
+  "$defs": {
+    "FixAttempt": {
+      "type": "object",
+      "required": [
+        "attempt_number",
+        "original_code",
+        "generated_code",
+        "repair_prompt",
+        "model",
+        "extraction",
+        "sandbox",
+        "failure",
+        "repair"
+      ],
+      "properties": {
+        "attempt_number": { "type": "integer", "minimum": 1 },
+        "original_code": { "type": "string" },
+        "generated_code": { "type": "string" },
+        "repair_prompt": { "type": "string" },
+        "model": {
+          "type": "object",
+          "required": ["raw_response"],
+          "properties": {
+            "raw_response": { "type": "string" },
+            "repair_prompt": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "extraction": {
+          "oneOf": [
+            { "$ref": "code_extraction.schema.json" },
+            {
+              "type": "object",
+              "required": ["code", "language", "had_fence", "block_count"],
+              "properties": {
+                "code": { "type": "string" },
+                "language": { "type": "string" },
+                "had_fence": { "type": "boolean" },
+                "block_count": { "type": "integer", "minimum": 0 },
+                "strategy": { "type": "string" },
+                "selected_block_index": { "type": ["integer", "null"] }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "sandbox": {
+          "oneOf": [
+            { "$ref": "sandbox_execution.schema.json" },
+            {
+              "type": "object",
+              "required": ["stdout", "stderr", "exit_code", "timed_out"],
+              "properties": {
+                "stdout": { "type": "string" },
+                "stderr": { "type": "string" },
+                "exit_code": { "type": "integer" },
+                "timed_out": { "type": "boolean" },
+                "wall_time_ms": { "type": "number", "minimum": 0 },
+                "memory_peak_mb": { "type": "number", "minimum": 0 }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "failure": {
+          "type": "object",
+          "required": ["retryable"],
+          "properties": {
+            "reason": { "type": ["string", "null"] },
+            "stderr": { "type": "string" },
+            "retryable": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "repair": {
+          "type": "object",
+          "required": ["repair_prompt"],
+          "properties": {
+            "repair_prompt": { "type": "string" },
+            "prompt_length": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "context",
+    "references",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "extract_failed", "infra_error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "code_repair_pipeline"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "status",
+        "succeeded",
+        "attempts",
+        "final_code",
+        "stdout",
+        "stderr",
+        "exit_code",
+        "timed_out"
+      ],
+      "properties": {
+        "status": { "type": "string" },
+        "succeeded": { "type": "boolean" },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "final_code": { "type": "string" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "memory_peak_mb": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["task", "attempts_used"],
+      "properties": {
+        "task": { "type": "string" },
+        "attempts_used": { "type": "integer", "minimum": 0 },
+        "extraction_had_fence": { "type": "boolean" },
+        "extraction_language": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "required": ["fix_history"],
+      "properties": {
+        "fix_history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FixAttempt" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "properties": {
+              "succeeded": { "const": true },
+              "exit_code": { "const": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["error", "timeout", "extract_failed", "infra_error"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "succeeded": { "const": false }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

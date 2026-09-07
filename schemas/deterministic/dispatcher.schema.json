@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/dispatcher.schema.json",
+  "title": "ToolDispatcherSocket",
+  "description": "Rich output socket for tool dispatching, preserving nested underlying tool output and dispatch execution metadata",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "context",
+    "execution",
+    "references",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "unknown_tool", "unknown_function"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "tool_dispatch"
+    },
+    "result": {
+      "type": "object",
+      "required": ["call_id", "tool_name", "function_name", "status"],
+      "properties": {
+        "call_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "function_name": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["success", "error", "unknown_tool", "unknown_function"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["call_id", "tool_name", "function_name"],
+      "properties": {
+        "call_id": { "type": "string", "minLength": 1 },
+        "tool_name": { "type": "string", "minLength": 1 },
+        "function_name": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["sanitized_arguments"],
+      "properties": {
+        "sanitized_arguments": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["is_mock", "registry_status"],
+      "properties": {
+        "is_mock": { "type": "boolean" },
+        "registry_status": {
+          "type": "string",
+          "enum": ["found", "not_found", "unknown_tool", "unknown_function", "success", "error"]
+        },
+        "callable_resolved": { "type": "boolean" },
+        "argument_validation_passed": { "type": "boolean" },
+        "retries_attempted": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "required": ["tool_output"],
+      "properties": {
+        "tool_output": {
+          "description": "Preserved full underlying tool output socket or JSON-serializable tool result payload"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["error", "unknown_tool", "unknown_function"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

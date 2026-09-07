@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/exact_search.schema.json",
+  "title": "ExactSearchSocket",
+  "description": "Rich output socket for literal or regex exact search over canonical source artifacts",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "exact_search"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "max_results_hit": { "type": "boolean" },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["doc_id", "element_id", "element_type", "matched_text", "snippet", "match_start", "match_end"],
+            "additionalProperties": false,
+            "properties": {
+              "doc_id": { "type": "string" },
+              "element_id": { "type": "string" },
+              "element_type": { "type": "string" },
+              "page": { "type": ["integer", "null"], "minimum": 1 },
+              "order": { "type": ["integer", "null"], "minimum": 0 },
+              "ref": { "type": ["string", "null"] },
+              "match_start": { "type": "integer", "minimum": 0 },
+              "match_end": { "type": "integer", "minimum": 0 },
+              "snippet": { "type": "string" },
+              "matched_text": { "type": "string" },
+              "table_row": { "type": ["integer", "null"], "minimum": 0 },
+              "table_col": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "case_sensitive": { "type": "boolean" },
+        "regex": { "type": "boolean" },
+        "doc_ids_filter": { "type": ["array", "null"], "items": { "type": "string" } },
+        "max_results": { "type": "integer", "minimum": 1 },
+        "searched_canonical_subdirs": { "type": "array", "items": { "type": "string" } },
+        "derived_excluded": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "context", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["query", "count", "max_results_hit", "matches"]
+          },
+          "context": {
+            "required": ["query", "case_sensitive", "regex", "max_results", "searched_canonical_subdirs", "derived_excluded"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

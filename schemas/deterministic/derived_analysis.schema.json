@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/derived_analysis.schema.json",
+  "title": "DerivedImageAnalysisPersistenceSocket",
+  "description": "Rich output socket for persisting and indexing derived vision/OCR analyses with explicit save-vs-index lifecycle state",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "context",
+    "storage",
+    "execution",
+    "raw",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "derived_image_analysis_persistence"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "image_id": { "type": "string" },
+        "analysis_id": { "type": "string" },
+        "attempt_number": { "type": "integer", "minimum": 1 },
+        "became_current": { "type": "boolean" },
+        "derived_file": { "type": "string" },
+        "chroma_record_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["doc_id", "image_id", "analysis_id", "model", "task_type"],
+      "properties": {
+        "doc_id": { "type": "string", "minLength": 1 },
+        "image_id": { "type": "string", "minLength": 1 },
+        "analysis_id": { "type": "string", "minLength": 1 },
+        "attempt_number": { "type": "integer", "minimum": 1 },
+        "model": { "type": "string" },
+        "task_type": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "instruction": { "type": ["string", "null"] },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "superseded", "rejected"]
+        },
+        "previous_current_analysis_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "required": ["derived_file_ref", "canonical_image_untouched"],
+      "properties": {
+        "derived_file_ref": { "type": "string" },
+        "canonical_image_untouched": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["indexed_in_chroma", "chroma_record_id"],
+      "properties": {
+        "indexed_in_chroma": { "type": "boolean" },
+        "chroma_record_id": { "type": ["string", "null"] },
+        "collection": { "type": ["string", "null"], "enum": ["sage_derived", null] }
+      },
+      "additionalProperties": false
+    },
+    "raw": {
+      "type": "object",
+      "required": ["raw_output"],
+      "properties": {
+        "raw_output": { "type": "string" },
+        "ocr_text": { "type": ["string", "null"] },
+        "description": { "type": ["string", "null"] },
+        "observations": {
+          "type": ["object", "null"],
+          "description": "Structured observations extracted from the analysis (e.g. key-value pairs or metrics)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": [
+              "doc_id",
+              "image_id",
+              "analysis_id",
+              "attempt_number",
+              "became_current",
+              "derived_file",
+              "chroma_record_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

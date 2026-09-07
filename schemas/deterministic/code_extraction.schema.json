@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/code_extraction.schema.json",
+  "title": "CodeExtractionSocket",
+  "description": "Rich output socket for deterministic Python code extraction from LLM responses preserving raw responses and detected fences",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "raw",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "fallback", "empty"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "code_extraction"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "code",
+        "language",
+        "had_fence",
+        "block_count",
+        "selected_block_index",
+        "extraction_strategy",
+        "fallback_used",
+        "detected_blocks"
+      ],
+      "properties": {
+        "code": { "type": "string" },
+        "language": { "type": "string" },
+        "had_fence": { "type": "boolean" },
+        "block_count": { "type": "integer", "minimum": 0 },
+        "strategy": {
+          "type": "string",
+          "enum": ["named_python_fence", "generic_fence", "unfenced_fallback", "empty"]
+        },
+        "selected_block_index": { "type": ["integer", "null"], "minimum": 0 },
+        "extraction_strategy": {
+          "type": "string",
+          "enum": ["named_python_fence", "generic_fence", "unfenced_fallback", "empty"]
+        },
+        "fallback_used": { "type": "boolean" },
+        "detected_blocks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "language", "code", "fenced", "char_count"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "language": { "type": "string" },
+              "code": { "type": "string" },
+              "fenced": { "type": "boolean" },
+              "char_count": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw": {
+      "type": "object",
+      "required": [
+        "raw_response",
+        "raw_response_length",
+        "extracted_character_count",
+        "extracted_line_count"
+      ],
+      "properties": {
+        "raw_response": { "type": "string" },
+        "raw_response_length": { "type": "integer", "minimum": 0 },
+        "extracted_character_count": { "type": "integer", "minimum": 0 },
+        "extracted_line_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  }
+}

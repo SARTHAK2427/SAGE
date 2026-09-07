@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/reindex_document.schema.json",
+  "title": "ReindexDocumentSocket",
+  "description": "Rich output socket for rebuilding Chroma index for a single document from canonical artifacts",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "reindex_document"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "source_records_rebuilt": { "type": "integer", "minimum": 0 },
+        "embedded_records": { "type": "integer", "minimum": 0 },
+        "canonical_artifacts_discovered": { "type": "integer", "minimum": 0 },
+        "chunks_rebuilt": { "type": "integer", "minimum": 0 },
+        "derived_analyses_discovered": { "type": "integer", "minimum": 0 },
+        "derived_records_rebuilt": { "type": "integer", "minimum": 0 },
+        "skipped_records": { "type": "integer", "minimum": 0 },
+        "scope": { "type": "string", "enum": ["source_only", "full"] },
+        "collections_updated": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["doc_id"],
+      "properties": {
+        "doc_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["rebuild_scope", "derived_reconstruction_supported"],
+      "properties": {
+        "rebuild_scope": { "type": "string" },
+        "derived_reconstruction_supported": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": [
+              "doc_id",
+              "source_records_rebuilt",
+              "embedded_records",
+              "canonical_artifacts_discovered",
+              "chunks_rebuilt",
+              "derived_analyses_discovered",
+              "derived_records_rebuilt",
+              "skipped_records",
+              "scope",
+              "collections_updated"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

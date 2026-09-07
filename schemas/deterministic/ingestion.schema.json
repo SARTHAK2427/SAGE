@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/ingestion.schema.json",
+  "title": "DocumentIngestionSocket",
+  "description": "Rich output socket for document ingestion into SAGE DocumentDB",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "document_ingestion"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "integer", "minimum": 0 },
+            "images": { "type": "integer", "minimum": 0 },
+            "tables": { "type": "integer", "minimum": 0 },
+            "code": { "type": "integer", "minimum": 0 },
+            "links": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["text", "images", "tables", "code"],
+          "additionalProperties": false
+        },
+        "indexed_source_records": { "type": "integer", "minimum": 0 },
+        "is_duplicate": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "original_filename": { "type": "string" },
+        "extension": { "type": "string" },
+        "mime_type": { "type": ["string", "null"] },
+        "sha256": { "type": "string" },
+        "file_size_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "already_ingested": { "type": "boolean" },
+        "overwrite_artifacts": { "type": "boolean" },
+        "index_in_chroma_requested": { "type": "boolean" },
+        "parser": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "tag": { "type": "string" },
+            "version": { "type": ["string", "null"] }
+          },
+          "required": ["name", "tag"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "source_path": { "type": "string" },
+        "sha256": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "artifact_dir": { "type": "string" },
+        "manifest_path": { "type": "string" },
+        "raw_source_retained": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "chroma_indexing": {
+          "type": "object",
+          "properties": {
+            "performed": { "type": "boolean" },
+            "source_records": { "type": "integer", "minimum": 0 },
+            "collection": { "type": "string" }
+          },
+          "required": ["performed", "source_records", "collection"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["result", "identity", "storage", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["doc_id", "counts", "indexed_source_records", "is_duplicate"]
+          },
+          "identity": {
+            "required": ["doc_id", "original_filename", "extension", "sha256", "file_size_bytes"]
+          },
+          "storage": {
+            "required": ["artifact_dir", "manifest_path", "raw_source_retained"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

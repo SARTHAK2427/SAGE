@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/chroma_upsert.schema.json",
+  "title": "ChromaUpsertSocket",
+  "description": "Rich output socket for Chroma vector index write/upsert operations with atomic batch semantics",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "context",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "chroma_upsert"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "collection": { "type": "string" },
+        "record_count": { "type": "integer", "minimum": 0 },
+        "embedded_count": { "type": "integer", "minimum": 0 },
+        "requested_count": { "type": "integer", "minimum": 0 },
+        "successful_count": { "type": "integer", "minimum": 0 },
+        "failed_count": { "type": "integer", "minimum": 0 },
+        "skipped_count": { "type": "integer", "minimum": 0 },
+        "ids_written": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "atomic_batch": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["collection_name", "origin", "doc_ids_affected"],
+      "properties": {
+        "collection_name": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "enum": ["source", "derived"] },
+        "doc_ids_affected": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["replace_existing", "batches_count", "upsert_semantics"],
+      "properties": {
+        "replace_existing": { "type": "boolean" },
+        "batches_count": { "type": "integer", "minimum": 1 },
+        "upsert_semantics": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": [
+              "collection",
+              "record_count",
+              "embedded_count",
+              "requested_count",
+              "successful_count",
+              "failed_count",
+              "skipped_count",
+              "ids_written",
+              "atomic_batch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

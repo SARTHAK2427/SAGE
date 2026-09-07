@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/artifact_write.schema.json",
+  "title": "ArtifactWriteSocket",
+  "description": "Rich output socket for writing canonical document artifacts to disk",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "storage",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "artifact_write"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "files_written_count": { "type": "integer", "minimum": 0 },
+        "element_counts": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "integer", "minimum": 0 },
+            "images": { "type": "integer", "minimum": 0 },
+            "tables": { "type": "integer", "minimum": 0 },
+            "code": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["doc_id"],
+      "properties": {
+        "doc_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "artifact_dir": { "type": "string" },
+        "manifest_path": { "type": "string" },
+        "overwrite": { "type": "boolean" },
+        "manifest_written": { "type": "boolean" },
+        "artifact_dir_created": { "type": "boolean" },
+        "files_written": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "size_bytes"],
+            "properties": {
+              "element_id": { "type": ["string", "null"] },
+              "element_type": { "type": ["string", "null"] },
+              "path": { "type": "string" },
+              "size_bytes": { "type": "integer", "minimum": 0 },
+              "suffix": { "type": "string" },
+              "checksum": { "type": ["string", "null"] },
+              "created": { "type": "boolean" },
+              "overwritten": { "type": "boolean" },
+              "write_success": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["doc_id", "files_written_count", "element_counts"]
+          },
+          "storage": {
+            "required": ["artifact_dir", "manifest_path", "files_written"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

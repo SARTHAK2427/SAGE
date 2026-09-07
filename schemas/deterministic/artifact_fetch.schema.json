@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/artifact_fetch.schema.json",
+  "title": "ArtifactFetchSocket",
+  "description": "Rich output socket for direct canonical artifact element retrieval (Text, Image, Table, Code)",
+  "type": "object",
+  "$defs": {
+    "TextElement": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "const": "text" },
+        "subtype": { "type": ["string", "null"] },
+        "order": { "type": ["integer", "null"], "minimum": 0 },
+        "text": { "type": ["string", "null"] },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "slide": { "type": ["integer", "null"], "minimum": 1 },
+        "sheet": { "type": ["string", "null"] },
+        "bbox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "common.schema.json#/$defs/BoundingBox" }
+          ]
+        },
+        "provenance": { "type": "array" },
+        "links": { "type": "array" },
+        "previous_element": { "type": ["string", "null"] },
+        "next_element": { "type": ["string", "null"] },
+        "artifact_ref": { "type": ["string", "null"] },
+        "ref": { "type": ["string", "null"] }
+      }
+    },
+    "ImageElement": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "const": "image" },
+        "subtype": { "type": ["string", "null"] },
+        "order": { "type": ["integer", "null"], "minimum": 0 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "slide": { "type": ["integer", "null"], "minimum": 1 },
+        "sheet": { "type": ["string", "null"] },
+        "bbox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "common.schema.json#/$defs/BoundingBox" }
+          ]
+        },
+        "caption": { "type": ["string", "null"] },
+        "ref": { "type": ["string", "null"] },
+        "local_path": { "type": ["string", "null"] },
+        "exists": { "type": "boolean" },
+        "format": { "type": ["string", "null"] },
+        "dimensions": {
+          "type": ["array", "null"],
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "derived_available": { "type": "boolean" }
+      }
+    },
+    "TableElement": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "const": "table" },
+        "subtype": { "type": ["string", "null"] },
+        "order": { "type": ["integer", "null"], "minimum": 0 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "slide": { "type": ["integer", "null"], "minimum": 1 },
+        "sheet": { "type": ["string", "null"] },
+        "rows": { "type": "array" },
+        "dimensions": {
+          "type": ["array", "null"],
+          "items": { "type": "integer" }
+        },
+        "headers": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "markdown": { "type": ["string", "null"] },
+        "bbox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "common.schema.json#/$defs/BoundingBox" }
+          ]
+        },
+        "caption": { "type": ["string", "null"] },
+        "ref": { "type": ["string", "null"] }
+      }
+    },
+    "CodeElement": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "const": "code" },
+        "subtype": { "type": ["string", "null"] },
+        "order": { "type": ["integer", "null"], "minimum": 0 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "code": { "type": "string" },
+        "text": { "type": "string" },
+        "language": { "type": ["string", "null"] },
+        "ref": { "type": ["string", "null"] },
+        "artifact_ref": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "const": "artifact_fetch"
+    },
+    "result": {
+      "type": "object",
+      "required": ["found"],
+      "properties": {
+        "found": { "type": "boolean" },
+        "element": {
+          "oneOf": [
+            { "$ref": "#/$defs/TextElement" },
+            { "$ref": "#/$defs/ImageElement" },
+            { "$ref": "#/$defs/TableElement" },
+            { "$ref": "#/$defs/CodeElement" },
+            { "type": "object", "maxProperties": 0 }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["doc_id", "element_id", "element_type"],
+      "properties": {
+        "doc_id": { "type": "string" },
+        "element_id": { "type": "string" },
+        "element_type": { "type": "string" },
+        "subtype": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "doc_id": { "type": "string" },
+        "element_id": { "type": "string" },
+        "order": { "type": ["integer", "null"], "minimum": 0 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "slide": { "type": ["integer", "null"], "minimum": 1 },
+        "sheet": { "type": ["string", "null"] },
+        "bbox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "common.schema.json#/$defs/BoundingBox" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "ref": { "type": ["string", "null"] },
+        "local_path": { "type": ["string", "null"] },
+        "exists": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "properties": {
+        "links": { "type": "array" },
+        "previous_element": { "type": ["string", "null"] },
+        "next_element": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "visibility_mapping": {
+          "$ref": "common.schema.json#/$defs/VisibilityMapping"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "required": ["provenance", "storage", "timing"],
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["found", "element"],
+            "properties": {
+              "found": { "const": true },
+              "element": {
+                "oneOf": [
+                  { "$ref": "#/$defs/TextElement" },
+                  { "$ref": "#/$defs/ImageElement" },
+                  { "$ref": "#/$defs/TableElement" },
+                  { "$ref": "#/$defs/CodeElement" }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

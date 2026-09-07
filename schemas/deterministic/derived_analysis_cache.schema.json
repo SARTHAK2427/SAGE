@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sage.internal/schemas/deterministic/derived_analysis_cache.schema.json",
+  "title": "DerivedAnalysisCacheSocket",
+  "description": "Rich output socket for deterministic derived image analysis cache lookup and write operations (scoped to derived vision store)",
+  "type": "object",
+  "required": [
+    "status",
+    "operation",
+    "result",
+    "identity",
+    "storage",
+    "timing",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["hit", "miss", "write_success", "error"]
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "derived_analysis_cache_lookup",
+        "derived_analysis_cache_write",
+        "cache_lookup",
+        "cache_write"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "hit": { "type": "boolean" },
+        "analyses_count": { "type": "integer", "minimum": 0 },
+        "current_keys": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["doc_id", "image_id"],
+      "properties": {
+        "doc_id": { "type": "string", "minLength": 1 },
+        "image_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "required": ["cache_file_ref"],
+      "properties": {
+        "cache_file_ref": { "type": "string" },
+        "cache_path": { "type": ["string", "null"] },
+        "byte_size": { "type": ["integer", "null"], "minimum": 0 },
+        "visibility_mapping": {
+          "$ref": "common.schema.json#/$defs/VisibilityMapping"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "$ref": "common.schema.json#/$defs/Timing"
+    },
+    "warnings": {
+      "$ref": "common.schema.json#/$defs/Warnings"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "common.schema.json#/$defs/Error" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "hit" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["hit", "analyses_count", "current_keys"],
+            "properties": {
+              "hit": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "miss" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["hit", "analyses_count", "current_keys"],
+            "properties": {
+              "hit": { "const": false }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "write_success" } } },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "result": {
+            "required": ["hit", "analyses_count", "current_keys"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "error": { "$ref": "common.schema.json#/$defs/Error" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+# Python bytecode & cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+env/
+venv/
+sage_venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SAGE Runtime Data & Test Output
+artifacts/
+chroma_db/
+temp/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Model weights & large binaries (never commit heavy weights)
+models/
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+
+# Local llama.cpp binaries & executables
+llama-server*
+llama-cli*
+*.exe
+*.dll
+
+# Environment & local secrets
+.env
+.env.*
+!.env.example
+
+# IDE & Editor configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# OS-specific clutter
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
