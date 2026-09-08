@@ -83,3 +83,21 @@ class TestRunState:
         assert isinstance(d, dict)
         assert "run_id" in d
         assert "registered_documents" in d
+
+    def test_session_id_context_and_serialization(self):
+        state_default = RunState()
+        assert state_default.session_id == ""
+
+        state_custom = RunState(session_id="sess_custom_42")
+        assert state_custom.session_id == "sess_custom_42"
+
+        d = state_custom.to_dict()
+        assert d["session_id"] == "sess_custom_42"
+        assert "memory_manager" not in d
+        assert "_memory_manager" not in d
+
+        parsed = json.loads(state_custom.to_json())
+        assert parsed["session_id"] == "sess_custom_42"
+        assert "memory_manager" not in parsed
+        assert "_memory_manager" not in parsed
+

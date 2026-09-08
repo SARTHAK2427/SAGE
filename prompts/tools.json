@@ -210,6 +210,178 @@
           }
         }
       ]
+    },
+    {
+      "name": "memory",
+      "description": "Store, search, update, delete, summarize, and promote persistent hot and cold conversational memories.",
+      "functions": [
+        {
+          "name": "memory_search_hot",
+          "description": "Semantic search over recent, session-scoped hot memories (current task, temporary instructions, recent decisions).",
+          "arguments": {
+            "query":      {"type": "string",  "required": true},
+            "session_id": {"type": "string",  "required": true},
+            "top_k":      {"type": "integer", "required": false},
+            "category":   {"type": "string",  "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Ranked hot memory matches for the current session.",
+            "properties": {
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "memory_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                    "similarity": {"type": "number"},
+                    "importance": {"type": "number"},
+                    "created_at": {"type": "string"},
+                    "is_summary": {"type": "boolean"}
+                  }
+                }
+              },
+              "count": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "memory_search_cold",
+          "description": "Selective semantic search over long-term persistent cold memories (user preferences, facts, project facts, durable decisions).",
+          "arguments": {
+            "query":    {"type": "string",  "required": true},
+            "top_k":    {"type": "integer", "required": false},
+            "category": {"type": "string",  "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Ranked persistent cold memory matches.",
+            "properties": {
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "memory_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                    "similarity": {"type": "number"},
+                    "importance": {"type": "number"},
+                    "created_at": {"type": "string"},
+                    "is_summary": {"type": "boolean"}
+                  }
+                }
+              },
+              "count": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "memory_store_hot",
+          "description": "Store a temporary or task-specific memory into session-scoped hot memory.",
+          "arguments": {
+            "content":    {"type": "string",  "required": true},
+            "session_id": {"type": "string",  "required": true},
+            "category":   {"type": "string",  "required": false},
+            "importance": {"type": "number",  "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Stored hot memory confirmation.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "status":    {"type": "string"}
+            }
+          }
+        },
+        {
+          "name": "memory_store_cold",
+          "description": "Store a long-term, durable fact or user preference into cold memory that survives across sessions.",
+          "arguments": {
+            "content":    {"type": "string",  "required": true},
+            "category":   {"type": "string",  "required": false},
+            "importance": {"type": "number",  "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Stored cold memory confirmation.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "status":    {"type": "string"}
+            }
+          }
+        },
+        {
+          "name": "memory_update",
+          "description": "Update an existing hot or cold memory by ID to refine facts or avoid contradictory duplicates.",
+          "arguments": {
+            "memory_id":   {"type": "string", "required": true},
+            "memory_type": {"type": "string", "enum": ["hot", "cold"], "required": true},
+            "content":     {"type": "string", "required": false},
+            "category":    {"type": "string", "required": false},
+            "importance":  {"type": "number", "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Updated memory confirmation.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "status":    {"type": "string"}
+            }
+          }
+        },
+        {
+          "name": "memory_delete",
+          "description": "Delete a memory by ID from hot or cold storage.",
+          "arguments": {
+            "memory_id":   {"type": "string", "required": true},
+            "memory_type": {"type": "string", "enum": ["hot", "cold"], "required": true}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Deletion confirmation.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "deleted":   {"type": "boolean"}
+            }
+          }
+        },
+        {
+          "name": "memory_summarize",
+          "description": "Consolidate multiple accumulated hot memories into a single summary record.",
+          "arguments": {
+            "session_id":        {"type": "string", "required": true},
+            "summary_content":   {"type": "string", "required": true},
+            "parent_memory_ids": {"type": "array",  "items": {"type": "string"}, "required": true},
+            "category":          {"type": "string", "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Created summary memory record.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "status":    {"type": "string"}
+            }
+          }
+        },
+        {
+          "name": "memory_promote",
+          "description": "Promote a hot memory to durable cold memory across sessions (Gemma-decided).",
+          "arguments": {
+            "memory_id": {"type": "string", "required": true}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Promotion confirmation.",
+            "properties": {
+              "memory_id": {"type": "string"},
+              "promoted":  {"type": "boolean"}
+            }
+          }
+        }
+      ]
     }
   ]
 }

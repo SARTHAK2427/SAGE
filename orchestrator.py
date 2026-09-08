@@ -43,6 +43,12 @@ from core.mappers import (
     map_vision_result,
     map_coder_result,
     map_math_result,
+    map_memory_search_result,
+    map_memory_store_result,
+    map_memory_update_result,
+    map_memory_delete_result,
+    map_memory_summarize_result,
+    map_memory_promote_result,
     map_error_for_gemma,
     strip_internal_fields,
 )
@@ -296,7 +302,100 @@ class Orchestrator:
                 call_index=call_index, mapper_fn=map_math_result,
             )
 
-        # ── 5. Legacy document_analyzer bridge (→ document_database/rag_search)
+        # ── 5. memory group ───────────────────────────────────────────────────
+        elif tool_name == "memory" or tool_name.startswith("memory_") or tool_name in (
+            "search_hot", "search_cold", "store_hot", "store_cold",
+            "update", "delete", "summarize", "promote"
+        ):
+            if tool_name == "memory":
+                resolved_fn = func_name or "memory_search_hot"
+            else:
+                resolved_fn = func_name or tool_name
+            telemetry["memory_calls"] = telemetry.get("memory_calls", 0) + 1
+
+            # Normalize argument aliases (text -> content / query)
+            if "text" in arguments and "content" not in arguments:
+                arguments["content"] = arguments.pop("text")
+            if resolved_fn in ("memory_search_hot", "memory_search_cold", "search_hot", "search_cold"):
+                if "text" in arguments and "query" not in arguments:
+                    arguments["query"] = arguments.pop("text")
+
+            # Session context propagation and isolation:
+            # For session-scoped hot memory tools, use run_state.session_id as the
+            # authoritative session boundary or deterministic fallback if omitted.
+            if resolved_fn in (
+                "memory_store_hot",
+                "memory_search_hot",
+                "memory_summarize",
+                "store_hot",
+                "search_hot",
+                "summarize",
+            ):
+                if run_state.session_id:
+                    arguments["session_id"] = run_state.session_id
+                elif not arguments.get("session_id"):
+                    arguments["session_id"] = run_state.session_id
+
+            console.print(Panel(
+                f"[bold]Tool:[/bold] memory\n[bold]Function:[/bold] {resolved_fn}\n[bold]Args:[/bold] {str(arguments)[:200]}",
+                title="[bold green]EXECUTING TOOL: MEMORY[/bold green]",
+                border_style="green"
+            ))
+
+            disp_res: ToolResult = self.registry.dispatch(
+                "memory", resolved_fn, **arguments
+            )
+            rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {"status": disp_res.status}
+            if disp_res.status not in ("success", "partial"):
+                rich_socket["status"] = disp_res.status
+                rich_socket["error"] = disp_res.error
+
+            trace.append({
+                "actor": "memory",
+                "action": resolved_fn,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+            })
+
+            mapper_map = {
+                "memory_search_hot": map_memory_search_result,
+                "search_hot": map_memory_search_result,
+                "memory_search_cold": map_memory_search_result,
+                "search_cold": map_memory_search_result,
+                "memory_store_hot": map_memory_store_result,
+                "store_hot": map_memory_store_result,
+                "memory_store_cold": map_memory_store_result,
+                "store_cold": map_memory_store_result,
+                "memory_update": map_memory_update_result,
+                "update": map_memory_update_result,
+                "memory_delete": map_memory_delete_result,
+                "delete": map_memory_delete_result,
+                "memory_summarize": map_memory_summarize_result,
+                "summarize": map_memory_summarize_result,
+                "memory_promote": map_memory_promote_result,
+                "promote": map_memory_promote_result,
+            }
+
+            mapper_fn = mapper_map.get(resolved_fn)
+            if mapper_fn is None:
+                return {
+                    "call_index": call_index,
+                    "tool": "memory",
+                    "function": resolved_fn,
+                    "status": "error",
+                    "error": {
+                        "code": "UNMAPPED_TOOL_RESULT",
+                        "message": f"No Gemma-facing mapper exists for memory function '{resolved_fn}'.",
+                        "retryable": False,
+                    },
+                }
+
+            return map_tool_result_for_gemma(
+                "memory", resolved_fn, rich_socket,
+                call_index=call_index, mapper_fn=mapper_fn,
+            )
+
+        # ── 6. Legacy document_analyzer bridge (→ document_database/rag_search)
         elif tool_name == "document_analyzer":
             doc_ids = run_state.list_document_ids() or None
             query = arguments.get("query") or arguments.get("task") or task
@@ -444,6 +543,7 @@ class Orchestrator:
         if run_state is None:
             run_state = RunState(
                 request_id=f"req_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+                session_id=f"sess_{uuid.uuid4().hex[:12]}",
                 user_text=user_objective,
             )
             for att in attachments_manifest:

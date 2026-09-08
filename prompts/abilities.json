@@ -51,6 +51,54 @@
       "tool": "code_specialist",
       "function": "solve_code_task",
       "when": "Substantial coding work is required that benefits from a dedicated coding model."
+    },
+    {
+      "capability": "search session hot memory",
+      "tool": "memory",
+      "function": "memory_search_hot",
+      "when": "Retrieving recent decisions, temporary instructions, or task context specific to the current session."
+    },
+    {
+      "capability": "search persistent cold memory",
+      "tool": "memory",
+      "function": "memory_search_cold",
+      "when": "Retrieving durable user preferences, long-term project facts, or cross-session knowledge."
+    },
+    {
+      "capability": "store session hot memory",
+      "tool": "memory",
+      "function": "memory_store_hot",
+      "when": "Saving temporary context, intermediate task findings, or ephemeral instructions for the current session."
+    },
+    {
+      "capability": "store persistent cold memory",
+      "tool": "memory",
+      "function": "memory_store_cold",
+      "when": "Saving durable facts, permanent user preferences, or project-level decisions that must survive across sessions."
+    },
+    {
+      "capability": "update existing memory",
+      "tool": "memory",
+      "function": "memory_update",
+      "when": "Modifying an existing memory to reflect changed user preferences or avoid contradiction."
+    },
+    {
+      "capability": "delete memory",
+      "tool": "memory",
+      "function": "memory_delete",
+      "when": "Explicitly forgetting or removing an outdated or invalid memory."
+    },
+    {
+      "capability": "summarize accumulated hot memories",
+      "tool": "memory",
+      "function": "memory_summarize",
+      "when": "Consolidating a sequence of recent hot memories into a single concise summary."
+    },
+    {
+      "capability": "promote hot memory to cold memory",
+      "tool": "memory",
+      "function": "memory_promote",
+      "when": "Promoting an established session fact or decision to long-term cross-session storage."
     }
   ],
   "not_available": [

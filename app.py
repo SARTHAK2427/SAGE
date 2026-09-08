@@ -65,7 +65,8 @@ async def stop_server():
 @app.post("/api/chat")
 async def chat_endpoint(
     objective: str = Form(...),
-    files: Optional[List[UploadFile]] = File(None)
+    files: Optional[List[UploadFile]] = File(None),
+    session_id: Optional[str] = Form(None),
 ):
     if not objective or not objective.strip():
         raise HTTPException(status_code=400, detail="Objective prompt cannot be empty.")
@@ -74,7 +75,13 @@ async def chat_endpoint(
     req_temp_dir = config.TEMP_DIR / request_id
     req_temp_dir.mkdir(parents=True, exist_ok=True)
 
-    run_state = RunState(request_id=request_id, user_text=objective.strip())
+    effective_session_id = session_id.strip() if (session_id and session_id.strip()) else f"sess_{uuid.uuid4().hex[:12]}"
+
+    run_state = RunState(
+        request_id=request_id,
+        session_id=effective_session_id,
+        user_text=objective.strip(),
+    )
     attachments_manifest = []
     file_map = {}
 
@@ -163,12 +170,14 @@ async def chat_endpoint(
             file_map=file_map,
             run_state=run_state
         )
-        if isinstance(result, dict) and run_state.registered_documents:
-            # Backwards-compatible document reference metadata
-            result["registered_documents"] = [
-                {"doc_id": d.doc_id, "name": d.display_name, "type": d.file_type}
-                for d in run_state.registered_documents
-            ]
+        if isinstance(result, dict):
+            result["session_id"] = effective_session_id
+            if run_state.registered_documents:
+                # Backwards-compatible document reference metadata
+                result["registered_documents"] = [
+                    {"doc_id": d.doc_id, "name": d.display_name, "type": d.file_type}
+                    for d in run_state.registered_documents
+                ]
         return JSONResponse(content=result)
     except Exception as e:
         import traceback

@@ -16,10 +16,13 @@ Do not let Gemma invent:
 
 from __future__ import annotations
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,6 +71,7 @@ class RunState:
     """
     run_id: str = field(default_factory=lambda: f"run_{uuid.uuid4().hex[:12]}")
     request_id: str = ""
+    session_id: str = ""
     loop_index: int = 0
     user_text: str = ""
 
@@ -78,6 +82,55 @@ class RunState:
     current_model: str | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+
+    def __init__(
+        self,
+        run_id: str | None = None,
+        request_id: str = "",
+        session_id: str = "",
+        loop_index: int = 0,
+        user_text: str = "",
+        registered_documents: list[RegisteredDocument] | None = None,
+        tool_calls: list[ToolCallRecord] | None = None,
+        errors: list[str] | None = None,
+        current_model: str | None = None,
+        created_at: float | None = None,
+        updated_at: float | None = None,
+        memory_manager: Any = None,
+    ) -> None:
+        self.run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
+        self.request_id = request_id
+        self.session_id = session_id
+        self.loop_index = loop_index
+        self.user_text = user_text
+        self.registered_documents = registered_documents if registered_documents is not None else []
+        self.tool_calls = tool_calls if tool_calls is not None else []
+        self.errors = errors if errors is not None else []
+        self.current_model = current_model
+        now = time.time()
+        self.created_at = created_at if created_at is not None else now
+        self.updated_at = updated_at if updated_at is not None else now
+        self._memory_manager = memory_manager
+
+    @property
+    def memory_manager(self) -> Any:
+        """Access the MemoryManager instance for this runtime execution.
+
+        Returns the explicitly injected memory_manager if provided, or lazily
+        resolves the singleton from db_service.
+        """
+        if self._memory_manager is not None:
+            return self._memory_manager
+        try:
+            from db_service import get_memory_manager
+            return get_memory_manager()
+        except Exception as exc:
+            logger.warning("Could not resolve default memory_manager for RunState: %s", exc)
+            return None
+
+    @memory_manager.setter
+    def memory_manager(self, mgr: Any) -> None:
+        self._memory_manager = mgr
 
     # ── Document registration ─────────────────────────────────────────
 

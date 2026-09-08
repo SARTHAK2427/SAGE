@@ -39,6 +39,14 @@ from .gemma_results import (
 )
 from .coder_input import build_coder_input
 from .vision_input import build_vision_text_prompt, resolve_vision_image
+from .memory_results import (
+    map_memory_search_result,
+    map_memory_store_result,
+    map_memory_update_result,
+    map_memory_delete_result,
+    map_memory_summarize_result,
+    map_memory_promote_result,
+)
 
 __all__ = [
     # Gemma-facing result mappers
@@ -54,6 +62,13 @@ __all__ = [
     "build_tool_results_packet",
     "strip_internal_fields",
     "CANONICAL_GEMMA_MAPPERS",
+    # Memory result mappers
+    "map_memory_search_result",
+    "map_memory_store_result",
+    "map_memory_update_result",
+    "map_memory_delete_result",
+    "map_memory_summarize_result",
+    "map_memory_promote_result",
     # Specialist input plug builders
     "build_coder_input",
     "build_vision_text_prompt",

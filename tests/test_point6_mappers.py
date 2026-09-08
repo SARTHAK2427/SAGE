@@ -784,7 +784,7 @@ class TestLeakageGuard:
 class TestContractConsistency:
 
     def test_tools_json_has_exact_7_functions_with_returns(self):
-        """prompts/tools.json contains exactly the 7 approved functions with returns defined."""
+        """prompts/tools.json contains canonical functions with returns defined."""
         tools_path = Path("prompts/tools.json")
         assert tools_path.exists(), "prompts/tools.json must exist"
 
@@ -794,16 +794,26 @@ class TestContractConsistency:
         assert "tools" in data
         tools_map = {t["name"]: t for t in data["tools"]}
 
-        # Canonical tools only
-        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math"}
+        # Canonical tools
+        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math", "memory"}
         assert set(tools_map.keys()) == expected_tools
 
-        # Check all 7 canonical functions
+        # Check all 15 canonical functions
         expected_functions = {
             "document_database": {"rag_search", "exact_search", "artifact_fetch", "list_artifacts"},
             "vision_ocr": {"analyze_image"},
             "code_specialist": {"solve_code_task"},
             "math": {"calculate"},
+            "memory": {
+                "memory_search_hot",
+                "memory_search_cold",
+                "memory_store_hot",
+                "memory_store_cold",
+                "memory_update",
+                "memory_delete",
+                "memory_summarize",
+                "memory_promote",
+            },
         }
 
         total_fn_count = 0
@@ -818,10 +828,10 @@ class TestContractConsistency:
                 assert isinstance(fn_def["returns"], dict), f"{tool_name}/{fn_name} 'returns' must be an object"
                 assert "properties" in fn_def["returns"], f"{tool_name}/{fn_name} returns missing 'properties'"
 
-        assert total_fn_count == 7
+        assert total_fn_count == 15
 
     def test_abilities_json_matches_canonical_tools(self):
-        """prompts/abilities.json matches the 7 canonical functions in tools.json."""
+        """prompts/abilities.json matches the 15 canonical functions in tools.json."""
         abilities_path = Path("prompts/abilities.json")
         assert abilities_path.exists(), "prompts/abilities.json must exist"
 
@@ -839,12 +849,20 @@ class TestContractConsistency:
             ("vision_ocr", "analyze_image"),
             ("code_specialist", "solve_code_task"),
             ("math", "calculate"),
+            ("memory", "memory_search_hot"),
+            ("memory", "memory_search_cold"),
+            ("memory", "memory_store_hot"),
+            ("memory", "memory_store_cold"),
+            ("memory", "memory_update"),
+            ("memory", "memory_delete"),
+            ("memory", "memory_summarize"),
+            ("memory", "memory_promote"),
         }
         assert delegated_pairs == expected_pairs
 
     def test_canonical_mapper_coverage_all_7_functions(self):
-        """Programmatically assert that all 7 canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS."""
-        expected_7 = {
+        """Programmatically assert that all 15 canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS."""
+        expected_15 = {
             ("document_database", "rag_search"),
             ("document_database", "exact_search"),
             ("document_database", "artifact_fetch"),
@@ -852,8 +870,16 @@ class TestContractConsistency:
             ("vision_ocr", "analyze_image"),
             ("code_specialist", "solve_code_task"),
             ("math", "calculate"),
+            ("memory", "memory_search_hot"),
+            ("memory", "memory_search_cold"),
+            ("memory", "memory_store_hot"),
+            ("memory", "memory_store_cold"),
+            ("memory", "memory_update"),
+            ("memory", "memory_delete"),
+            ("memory", "memory_summarize"),
+            ("memory", "memory_promote"),
         }
-        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_7
+        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_15
         for key, mapper_fn in CANONICAL_GEMMA_MAPPERS.items():
             assert callable(mapper_fn), f"Mapper for {key} must be a callable function"
 

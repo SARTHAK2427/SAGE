@@ -71,6 +71,31 @@ body {
     color: var(--text-muted);
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.btn-new-session {
+    background-color: var(--bg-subtle);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    outline: none;
+}
+
+.btn-new-session:hover {
+    background-color: #30363d;
+    border-color: var(--text-muted);
+}
+
 .model-badge {
     display: flex;
     align-items: center;

@@ -65,6 +65,60 @@ class _LazyDocumentDB:
         return f"<LazyDocumentDB instance={_instance is not None}>"
 
 
-# ── Singleton instance ─────────────────────────────────────────────────────
+# ── Singleton instances ───────────────────────────────────────────────────
 document_db: SageDocumentDB = _LazyDocumentDB()  # type: ignore[assignment]
+
+
+# ── MemoryManager Singleton ─────────────────────────────────────────────────
+
+_mem_instance: Any = None
+
+
+def get_memory_manager(db: SageDocumentDB | None = None) -> Any:
+    """Return the singleton MemoryManager, initializing it on first call.
+
+    Reuses the existing embedding model and Chroma persistent directory.
+    """
+    global _mem_instance
+    if _mem_instance is None:
+        from sage_memory.config import (
+            CHROMA_ROOT as MEMORY_CHROMA_ROOT,
+            MEMORY_COLD_COLLECTION,
+            MEMORY_HOT_COLLECTION,
+            MEMORY_STORE_PATH,
+        )
+        from sage_memory.memory_index import MemoryChromaStore
+        from sage_memory.memory_manager import MemoryManager
+        from sage_memory.memory_store import MemoryStore
+        from sage_document_db.embeddings import EmbeddingService
+
+        if db is None:
+            db = get_db()
+
+        emb = getattr(db, "_emb", None) or EmbeddingService()
+        store = MemoryStore(MEMORY_STORE_PATH)
+        index = MemoryChromaStore(
+            chroma_root=MEMORY_CHROMA_ROOT,
+            embedding_service=emb,
+            hot_collection=MEMORY_HOT_COLLECTION,
+            cold_collection=MEMORY_COLD_COLLECTION,
+        )
+        _mem_instance = MemoryManager(store=store, index=index)
+        try:
+            _mem_instance.sync_indexes()
+        except Exception as exc:
+            logger.warning("Memory startup sync check failed: %s", exc)
+    return _mem_instance
+
+
+class _LazyMemoryManager:
+    """Transparent lazy proxy to MemoryManager singleton."""
+    def __getattr__(self, name: str):
+        return getattr(get_memory_manager(), name)
+
+    def __repr__(self) -> str:
+        return f"<LazyMemoryManager instance={_mem_instance is not None}>"
+
+
+memory_manager: Any = _LazyMemoryManager()
 

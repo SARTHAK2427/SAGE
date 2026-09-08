@@ -140,6 +140,8 @@ def map_tool_result_for_gemma(
         **mapper_kwargs: Extra keyword args forwarded to mapper_fn.
     """
     if mapper_fn is None or not callable(mapper_fn):
+        mapper_fn = CANONICAL_GEMMA_MAPPERS.get((tool, function))
+    if mapper_fn is None or not callable(mapper_fn):
         return {
             "call_index": call_index,
             "tool": tool,
@@ -677,3 +679,30 @@ CANONICAL_GEMMA_MAPPERS: dict[tuple[str, str], Any] = {
     ("code_specialist", "solve_code_task"): map_coder_result,
     ("math", "calculate"): map_math_result,
 }
+
+
+def _register_memory_mappers() -> None:
+    try:
+        from .memory_results import (
+            map_memory_search_result,
+            map_memory_store_result,
+            map_memory_update_result,
+            map_memory_delete_result,
+            map_memory_summarize_result,
+            map_memory_promote_result,
+        )
+        CANONICAL_GEMMA_MAPPERS.update({
+            ("memory", "memory_search_hot"): map_memory_search_result,
+            ("memory", "memory_search_cold"): map_memory_search_result,
+            ("memory", "memory_store_hot"): map_memory_store_result,
+            ("memory", "memory_store_cold"): map_memory_store_result,
+            ("memory", "memory_update"): map_memory_update_result,
+            ("memory", "memory_delete"): map_memory_delete_result,
+            ("memory", "memory_summarize"): map_memory_summarize_result,
+            ("memory", "memory_promote"): map_memory_promote_result,
+        })
+    except ImportError:
+        pass
+
+
+_register_memory_mappers()

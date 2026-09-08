@@ -18,7 +18,50 @@ document.addEventListener("DOMContentLoaded", () => {
     const metricWallTime = document.getElementById("metricWallTime");
     const traceTimeline = document.getElementById("traceTimeline");
 
+    const newSessionBtn = document.getElementById("newSessionBtn");
+
     let attachedFiles = [];
+
+    // Session state management
+    function generateSessionId() {
+        const rand = Math.random().toString(36).substring(2, 10);
+        return `sess_${Date.now().toString(36)}_${rand}`;
+    }
+
+    function getOrCreateSessionId() {
+        let sid = localStorage.getItem("sage_session_id");
+        if (!sid || !sid.trim()) {
+            sid = generateSessionId();
+            localStorage.setItem("sage_session_id", sid);
+        }
+        return sid;
+    }
+
+    // Save initial welcome card HTML to restore on New Session
+    const welcomeCardHtml = chatHistory ? chatHistory.innerHTML : "";
+
+    function resetSession() {
+        const newSid = generateSessionId();
+        localStorage.setItem("sage_session_id", newSid);
+        if (chatHistory) {
+            chatHistory.innerHTML = welcomeCardHtml;
+        }
+        attachedFiles = [];
+        renderAttachments();
+        promptInput.value = "";
+        promptInput.style.height = "auto";
+        if (telemetryCard) {
+            telemetryCard.style.display = "none";
+        }
+        if (traceTimeline) {
+            traceTimeline.innerHTML = "";
+        }
+        promptInput.focus();
+    }
+
+    if (newSessionBtn) {
+        newSessionBtn.addEventListener("click", resetSession);
+    }
 
     // Auto status poll
     async function updateStatus() {
@@ -169,6 +212,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Prepare FormData
         const formData = new FormData();
         formData.append("objective", text || "Analyze the attached files and perform the required operations.");
+        formData.append("session_id", getOrCreateSessionId());
         attachedFiles.forEach((file) => {
             formData.append("files", file);
         });
@@ -198,6 +242,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     console.error("Backend Traceback:", data.traceback);
                 }
             } else {
+                if (data.session_id) {
+                    localStorage.setItem("sage_session_id", data.session_id);
+                }
                 appendSageResponse(data.answer, data.telemetry);
                 updateTelemetryAndTrace(data.telemetry, data.trace);
             }
@@ -322,10 +369,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 const actorName = evt.actor === "gemma" ? "🧠 Gemma 4B" :
                                   evt.actor === "document_analyzer" ? "📄 Qwen3-VL" :
                                   evt.actor === "coder" ? "💻 Qwen2.5-Coder" :
-                                  evt.actor === "sandbox" ? "📦 Docker Sandbox" : evt.actor;
+                                  evt.actor === "sandbox" ? "📦 Docker Sandbox" :
+                                  evt.actor === "memory" ? "🧠 SAGE Memory" : evt.actor;
                 
                 const timeInfo = evt.duration ? `(${evt.duration.toFixed(1)}s)` :
-                                 evt.wall_time_ms ? `(${evt.wall_time_ms.toFixed(0)}ms)` : "";
+                                 evt.wall_time_ms ? `(${evt.wall_time_ms.toFixed(0)}ms)` :
+                                 evt.duration_ms ? `(${evt.duration_ms.toFixed(0)}ms)` : "";
                 actorHeader.innerHTML = `<span>${actorName}</span> <span style="font-weight:normal;color:var(--text-muted)">${timeInfo}</span>`;
                 evtDiv.appendChild(actorHeader);
 
@@ -343,6 +392,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     detail.textContent = `[${statusTag}] Exit ${evt.exit_code} | Memory: ${evt.memory_peak_mb}MB | Attempts: ${evt.attempts}${stdoutSnippet}`;
                 } else if (evt.action === "final_synthesis") {
                     detail.textContent = `Synthesized final answer for user`;
+                } else if (evt.actor === "memory") {
+                    detail.textContent = `[${(evt.status || "DONE").toUpperCase()}] ${evt.action}`;
                 } else {
                     detail.textContent = JSON.stringify(evt);
                 }

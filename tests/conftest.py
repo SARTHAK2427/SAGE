@@ -46,3 +46,12 @@ def tmp_chroma_root(tmp_path):
     chroma_root = tmp_path / "chroma_db"
     chroma_root.mkdir()
     return chroma_root
+
+
+@pytest.fixture()
+def tmp_memory_root(tmp_path):
+    """Provide a temporary canonical memory store root for tests."""
+    memory_root = tmp_path / "memory"
+    (memory_root / "hot").mkdir(parents=True)
+    (memory_root / "cold").mkdir(parents=True)
+    return memory_root
