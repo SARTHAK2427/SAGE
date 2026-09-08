@@ -97,38 +97,63 @@ async def chat_endpoint(
 
             # Ingest into SageDocumentDB
             doc_id = None
+            ingest_error = None
             try:
                 from db_service import document_db
                 ingest_res = document_db.ingest_document(str(save_path))
-                doc_id = ingest_res.get("doc_id")
+                if isinstance(ingest_res, dict) and ingest_res.get("status") == "error":
+                    ingest_error = str(ingest_res.get("error", "Ingestion failed"))
+                else:
+                    doc_id = ingest_res.get("doc_id")
             except Exception as exc:
-                print(f"Warning: Document DB ingestion failed/skipped for '{safe_filename}': {exc}")
-                import hashlib
-                doc_id = f"doc_{hashlib.md5(content).hexdigest()[:10]}"
+                print(f"Error: Document DB ingestion failed for '{safe_filename}': {exc}")
+                ingest_error = str(exc)
 
-            run_state.register_document(
-                doc_id=doc_id,
-                display_name=safe_filename,
-                file_type=suffix,
-                source_name=safe_filename,
-            )
-
-            file_entry = {
-                "ref": ref_id,
-                "doc_id": doc_id,
-                "name": safe_filename,
-                "type": suffix,
-                "size": file_size,
-                "path": str(save_path)
-            }
-
-            attachments_manifest.append({
-                "ref": ref_id,
-                "doc_id": doc_id,
-                "name": safe_filename,
-                "type": suffix,
-                "size": file_size
-            })
+            if doc_id:
+                run_state.register_document(
+                    doc_id=doc_id,
+                    display_name=safe_filename,
+                    file_type=suffix,
+                    source_name=safe_filename,
+                )
+                file_entry = {
+                    "ref": ref_id,
+                    "doc_id": doc_id,
+                    "name": safe_filename,
+                    "type": suffix,
+                    "size": file_size,
+                    "path": str(save_path),
+                    "status": "ingested",
+                }
+                attachments_manifest.append({
+                    "ref": ref_id,
+                    "doc_id": doc_id,
+                    "name": safe_filename,
+                    "type": suffix,
+                    "size": file_size,
+                    "status": "ingested",
+                })
+            else:
+                # Ingestion failed - do NOT fabricate or register a ghost doc_id!
+                file_entry = {
+                    "ref": ref_id,
+                    "doc_id": None,
+                    "name": safe_filename,
+                    "type": suffix,
+                    "size": file_size,
+                    "path": str(save_path),
+                    "status": "ingestion_failed",
+                    "error": ingest_error or "Document DB ingestion failed",
+                }
+                attachments_manifest.append({
+                    "ref": ref_id,
+                    "doc_id": None,
+                    "name": safe_filename,
+                    "type": suffix,
+                    "size": file_size,
+                    "status": "ingestion_failed",
+                    "error": ingest_error or "Document DB ingestion failed",
+                })
             file_map[ref_id] = file_entry
 
     try:

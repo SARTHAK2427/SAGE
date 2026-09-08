@@ -150,6 +150,25 @@ class RunState:
                 break
         self.updated_at = time.time()
 
+    def record_tool_result(
+        self,
+        call_id: str,
+        status: str,
+        result_summary: str | None = None,
+        error: str | None = None,
+        end_time: float | None = None,
+    ) -> None:
+        """Record the completion and result of a tool call."""
+        for record in self.tool_calls:
+            if record.call_id == call_id:
+                record.end_time = end_time or time.time()
+                record.duration_ms = (record.end_time - record.start_time) * 1000
+                record.status = status
+                record.result_summary = result_summary
+                record.error = error
+                break
+        self.updated_at = time.time()
+
     # ── Serialization ─────────────────────────────────────────────────
 
     def to_dict(self) -> dict:

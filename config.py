@@ -124,7 +124,7 @@ MODELS = {
         "name": "Gemma 4B Instruct",
         "model_path": os.path.join(MODEL_DIR, "gemma-4-E4B-it-Q4_K_M.gguf"),
         "mmproj": None,
-        "context": 8192,
+        "context": int(os.environ.get("GEMMA_CONTEXT", "16384")),
         "ngl": 999,
         "temperature": 0.20,
         "max_tokens": 2048,

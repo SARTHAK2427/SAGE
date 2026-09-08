@@ -59,7 +59,14 @@ def _is_mock_mode() -> bool:
 
 class Orchestrator:
     def __init__(self, registry: Optional[ToolRegistry] = None):
-        self.agent_system_prompt = self._load_prompt("agent_system.txt")
+        base_prompt = self._load_prompt("agent_system.txt")
+        tools_def = self._load_prompt("tools.json")
+        abilities_def = self._load_prompt("abilities.json")
+        if tools_def:
+            base_prompt += f"\n\nAUTHORITATIVE tools.json:\n{tools_def}"
+        if abilities_def:
+            base_prompt += f"\n\nAUTHORITATIVE abilities.json:\n{abilities_def}"
+        self.agent_system_prompt = base_prompt
         self.coder_system_prompt = self._load_prompt("coder_system.txt")
         self.document_system_prompt = self._load_prompt("document_system.txt")
 
@@ -190,8 +197,16 @@ class Orchestrator:
                 run_state.registered_documents[0].doc_id
                 if run_state.registered_documents else ""
             )
-            image_id = arguments.get("image_id", "")
-            instruction = arguments.get("instruction", task)
+            image_id = arguments.get("image_id") or (arguments.get("image_ids")[0] if arguments.get("image_ids") else "")
+            if not image_id and doc_id:
+                try:
+                    from db_service import document_db
+                    arts = document_db.list_artifacts(doc_id=doc_id, element_type="image")
+                    if arts.get("artifacts"):
+                        image_id = arts["artifacts"][0]["element_id"]
+                except Exception:
+                    pass
+            instruction = arguments.get("instruction") or arguments.get("prompt") or arguments.get("task") or task or "Extract all text, numbers, and details from this image."
             image_ref = arguments.get("image_ref")
 
             telemetry["document_calls"] = telemetry.get("document_calls", 0) + 1
@@ -224,7 +239,7 @@ class Orchestrator:
         # ── 3. code_specialist group ──────────────────────────────────────────
         elif tool_name in ("code_specialist", "coder"):
             resolved_fn = func_name or "solve_code_task"
-            instruction = arguments.get("instruction") or arguments.get("task") or task
+            instruction = arguments.get("instruction") or arguments.get("prompt") or arguments.get("task") or task
             code = arguments.get("code")
             language = arguments.get("language")
 

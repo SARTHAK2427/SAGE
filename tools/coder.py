@@ -260,8 +260,8 @@ def _generate_code_via_model(
         if coder_prompt:
             messages.append({"role": "system", "content": coder_prompt})
         messages.append({"role": "user", "content": build_coder_input(instruction, code, language)})
-        model_manager.ensure_model("qwen_coder")
-        coder_cfg = config.MODELS.get("qwen_coder", {})
+        model_manager.ensure_model("coder")
+        coder_cfg = config.MODELS.get("coder", {})
         res = model_client.chat_completion(
             messages=messages,
             temperature=coder_cfg.get("temperature", 0.05),
@@ -296,8 +296,8 @@ def _get_llm_code_response(
         if coder_prompt:
             messages.append({"role": "system", "content": coder_prompt})
         messages.append({"role": "user", "content": build_coder_input(instruction, code, language)})
-        model_manager.ensure_model("qwen_coder")
-        coder_cfg = config.MODELS.get("qwen_coder", {})
+        model_manager.ensure_model("coder")
+        coder_cfg = config.MODELS.get("coder", {})
         res = model_client.chat_completion(
             messages=messages,
             temperature=coder_cfg.get("temperature", 0.05),

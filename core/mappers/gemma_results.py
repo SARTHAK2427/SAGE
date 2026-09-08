@@ -262,7 +262,7 @@ def map_rag_result(data: dict) -> dict:
     """
     result_block = data.get("result") or {}
     context_block = data.get("context") or {}
-    records = result_block.get("records") or []
+    records = result_block.get("records") or data.get("results") or []
 
     matches = []
     for r in records:
@@ -270,6 +270,11 @@ def map_rag_result(data: dict) -> dict:
         cosine_sim = r.get("derived_cosine_similarity")
         if cosine_sim is None:
             cosine_sim = r.get("derived_similarity")
+        if cosine_sim is None and r.get("distance") is not None:
+            try:
+                cosine_sim = max(0.0, 1.0 - float(r.get("distance")))
+            except (ValueError, TypeError):
+                cosine_sim = None
 
         # Source label: "canonical" for source records, "derived" for vision/OCR.
         origin = r.get("origin", "source")
@@ -283,7 +288,7 @@ def map_rag_result(data: dict) -> dict:
             "text": r.get("text", ""),
             "doc_id": r.get("doc_id", ""),
             "element_type": r.get("record_type", "text"),
-            "raw_distance": r.get("raw_distance"),
+            "raw_distance": r.get("distance") if r.get("distance") is not None else r.get("raw_distance"),
             "cosine_similarity": cosine_sim,
             "source": source_label,
         }
@@ -306,7 +311,7 @@ def map_rag_result(data: dict) -> dict:
     return {
         "matches": matches,
         "returned": len(matches),
-        "top_k": context_block.get("requested_top_k") or len(matches),
+        "top_k": context_block.get("requested_top_k") or data.get("count") or len(matches),
     }
 
 

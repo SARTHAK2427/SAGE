@@ -141,6 +141,32 @@ class TestGemmaResultMappers:
             assert "local_path" not in m
             assert "record_id" not in m
 
+    def test_map_rag_result_with_dispatcher_results_format(self):
+        """rag_search mapper must also accept the direct tool_rag_search output schema."""
+        socket_data = {
+            "status": "success",
+            "results": [
+                {
+                    "record_id": "doc_1:chunk:1",
+                    "origin": "source",
+                    "record_type": "text_chunk",
+                    "text": "Linear and Binary Search analysis.",
+                    "distance": 0.15,
+                    "doc_id": "doc_1",
+                    "source_element_ids": ["txt_001"],
+                    "image_refs": ["img_01"],
+                }
+            ],
+            "count": 1,
+        }
+        mapped = map_rag_result(socket_data)
+        assert mapped["returned"] == 1
+        assert len(mapped["matches"]) == 1
+        assert mapped["matches"][0]["text"] == "Linear and Binary Search analysis."
+        assert mapped["matches"][0]["element_id"] == "txt_001"
+        assert mapped["matches"][0]["cosine_similarity"] == 0.85
+        assert mapped["matches"][0]["source"] == "canonical"
+
     def test_exact_search_multiple_matches(self):
         """exact_search returns multiple literal matches with context & offsets."""
         rich_socket = {

@@ -97,22 +97,45 @@ def ingest_document(
         except Exception:
             skip_write = False
 
+    # --- Sanitize Office ZIP if needed (never edit original in-place) ---
+    from .zip_sanitizer import sanitize_office_zip
+    sanitation = sanitize_office_zip(source_path)
+    working_path = sanitation.working_path
+
     # --- Parse ---
     doc = None
     t_parse_start = time.perf_counter()
-    if not skip_write:
-        doc = _parse(parser_tag, source_path)
-        if debug:
-            _print_elements(doc)
-    stage_timings["parse_ms"] = (time.perf_counter() - t_parse_start) * 1000.0
+    try:
+        if not skip_write:
+            doc = _parse(
+                parser_tag,
+                working_path,
+                original_source_path=source_path,
+                original_sha=sha,
+                original_size=file_size_bytes,
+                doc_id=doc_id,
+            )
+            if sanitation.was_sanitized and sanitation.sanitation_warning:
+                doc.warnings.append(sanitation.sanitation_warning)
+            if debug:
+                _print_elements(doc)
+        stage_timings["parse_ms"] = (time.perf_counter() - t_parse_start) * 1000.0
 
-    # --- Write artifacts ---
-    t_write_start = time.perf_counter()
-    if not skip_write:
-        doc_dir = store.write_document(doc)
-    else:
-        doc_dir = store.doc_dir(doc_id)
-    stage_timings["artifact_write_ms"] = (time.perf_counter() - t_write_start) * 1000.0
+        # --- Write artifacts ---
+        t_write_start = time.perf_counter()
+        if not skip_write:
+            doc_dir = store.write_document(doc)
+        else:
+            doc_dir = store.doc_dir(doc_id)
+        stage_timings["artifact_write_ms"] = (time.perf_counter() - t_write_start) * 1000.0
+    finally:
+        # Clean up temporary sanitized copy if one was created
+        if sanitation.was_sanitized and sanitation.working_path != source_path:
+            try:
+                if sanitation.working_path.exists():
+                    sanitation.working_path.unlink()
+            except Exception:
+                pass
 
     # --- Load counts from manifest ---
     manifest = store.load_manifest(doc_id)
@@ -249,10 +272,44 @@ def ingest_document(
 # Parser dispatch
 # ---------------------------------------------------------------------------
 
-def _parse(parser_tag: str, source_path: Path):
+def _parse(
+    parser_tag: str,
+    source_path: Path,
+    original_source_path: Path | None = None,
+    original_sha: str | None = None,
+    original_size: int | None = None,
+    doc_id: str | None = None,
+):
+    orig_path = original_source_path or source_path
     if parser_tag == "docling":
         from .docling_parser import parse_with_docling
-        return parse_with_docling(source_path)
+        try:
+            doc = parse_with_docling(source_path)
+            # Ensure provenance reflects original uploaded file
+            if original_source_path is not None:
+                doc.source_path = str(orig_path)
+                doc.original_name = orig_path.name
+            if original_sha is not None:
+                doc.sha256 = original_sha
+            if original_size is not None:
+                doc.file_size_bytes = original_size
+            if doc_id is not None:
+                doc.doc_id = doc_id
+            return doc
+        except Exception as docling_err:
+            if orig_path.suffix.lower() == ".docx":
+                from .docx_fallback import parse_docx_fallback
+                from .utils import make_doc_id
+                effective_sha = original_sha or sha256_file(orig_path)
+                return parse_docx_fallback(
+                    working_path=source_path,
+                    original_source_path=orig_path,
+                    doc_id=doc_id or make_doc_id(effective_sha),
+                    original_sha=effective_sha,
+                    original_size=original_size or orig_path.stat().st_size,
+                    docling_error=str(docling_err),
+                )
+            raise
     elif parser_tag == "txt":
         from .simple_parsers import parse_txt
         return parse_txt(source_path)

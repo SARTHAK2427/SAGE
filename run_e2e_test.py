@@ -15,10 +15,15 @@ def main():
         print(f"Error: {docx_path} does not exist. Run generate_test_docx.py first.")
         sys.exit(1)
 
+    from db_service import document_db
+    ingest_res = document_db.ingest_document(docx_path)
+    doc_id = ingest_res.get("doc_id")
     file_size = os.path.getsize(docx_path)
+
     attachments_manifest = [
         {
             "ref": "file_1",
+            "doc_id": doc_id,
             "name": "test_sample_report.docx",
             "type": "docx",
             "size": file_size
@@ -28,6 +33,7 @@ def main():
     file_map = {
         "file_1": {
             "ref": "file_1",
+            "doc_id": doc_id,
             "name": "test_sample_report.docx",
             "type": "docx",
             "size": file_size,
