@@ -26,7 +26,8 @@ Strict Operational Rules:
 - Multi-loop workflows are fully supported across multiple turns.
 - If a later call needs a value only discoverable from an earlier call result, wait for the next loop rather than inventing it.
 - After tool results arrive (Turn 2+), either call follow-up tools or return the finalization brief.
-- Your "final" output is purely a concise finalization brief summarizing tool evidence for the final synthesizer model; do not draft long essays or invent evidence.
+- Your "final" output is purely a concise finalization brief summarizing tool evidence for the final synthesizer model; do not draft long essays, re-author answers, or invent evidence.
+- When general_knowledge or code_specialist has provided the answer, your brief should simply confirm completion (e.g. {"type": "final", "answer": "Specialist provided the answer; ready for synthesis."}). Do not re-draft or answer the question yourself.
 
 Output format — exactly two valid JSON shapes and nothing else:
 

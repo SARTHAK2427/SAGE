@@ -450,6 +450,14 @@ class Orchestrator:
             if disp_res.duration_ms:
                 telemetry["synthesizer_duration"] = telemetry.get("synthesizer_duration", 0.0) + (disp_res.duration_ms / 1000.0)
 
+            ans_text = rich_socket.get("answer", "")
+            ans_preview = ans_text[:400] + ("..." if len(ans_text) > 400 else "")
+            console.print(Panel(
+                ans_preview,
+                title=f"[bold magenta]RESULT <- GENERAL KNOWLEDGE (Qwen3.5 2B) ({(disp_res.duration_ms or 0) / 1000.0:.2f}s)[/bold magenta]",
+                border_style="magenta"
+            ))
+
             trace.append({
                 "actor": "final_synthesizer",
                 "action": "general_knowledge",
@@ -892,6 +900,12 @@ class Orchestrator:
 
                     if synth_output:
                         final_answer = synth_output
+                        synth_tok_info = f"{synth_duration:.2f}s | {synth_usage.get('completion_tokens', 'N/A')} tokens"
+                        console.print(Panel(
+                            synth_output,
+                            title=f"[bold magenta]OUTPUT <- FINAL SYNTHESIZER (Qwen3.5 2B) ({synth_tok_info})[/bold magenta]",
+                            border_style="magenta"
+                        ))
                     else:
                         logger.warning("final_synthesizer returned empty content; falling back to Gemma brief.")
                         final_answer = gemma_brief
