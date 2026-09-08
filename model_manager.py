@@ -21,6 +21,7 @@ class ModelManager:
         self.server_process: Optional[subprocess.Popen] = None
         self.switch_count: int = 0
         self.log_files: Dict[str, Any] = {}
+        self._rearm_thread: Optional[Any] = None
 
     def is_port_in_use(self, port: int, host: str = "127.0.0.1") -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -54,6 +55,19 @@ class ModelManager:
         return False
 
     def stop_current(self) -> None:
+        # Clean up all open log file descriptors unconditionally
+        for key, fp in list(self.log_files.items()):
+            try:
+                fp.close()
+            except Exception:
+                pass
+        self.log_files.clear()
+
+        if config.is_remote_backend():
+            # Remote mode: nothing local to stop; reset tracked key only
+            self.current_model_key = None
+            return
+
         if self.server_process:
             model_name = self.current_model_key or "unknown"
             console.print(f"[yellow][STOP] Stopping llama-server ({model_name})...[/yellow]")
@@ -69,12 +83,43 @@ class ModelManager:
             finally:
                 self.server_process = None
                 self.current_model_key = None
-        
+
+        self.current_model_key = None
         self.wait_for_port_free(config.LLAMA_PORT, timeout=5.0)
+
+    def rearm_agent_background(self) -> None:
+        """Asynchronously warm up Gemma 4B on the remote worker so it stays loaded."""
+        if os.environ.get("SAGE_MOCK_MODE", "0") == "1":
+            self.current_model_key = "agent"
+            self._rearm_thread = None
+            return
+
+        if config.is_remote_backend():
+            import threading
+            from core.remote_model_transport import remote_model_transport
+
+            def _warmup():
+                try:
+                    remote_model_transport.infer_gemma(
+                        messages=[{"role": "user", "content": "ping"}],
+                        max_tokens=1,
+                    )
+                except Exception:
+                    pass
+
+            self._rearm_thread = threading.Thread(target=_warmup, daemon=True)
+            self._rearm_thread.start()
+            self.current_model_key = "agent"
 
     def ensure_model(self, model_key: str) -> bool:
         if model_key not in config.MODELS:
             raise ValueError(f"Unknown model key: {model_key}. Available: {list(config.MODELS.keys())}")
+
+        if config.is_remote_backend():
+            # In remote mode, model switching and execution are handled by the remote GPU worker.
+            # Local llama-server is never spawned.
+            self.current_model_key = model_key
+            return True
 
         if self.current_model_key == model_key and self.is_healthy():
             return True
@@ -116,8 +161,16 @@ class ModelManager:
             cmd.extend(["--reasoning", str(model_cfg["reasoning"])])
 
         # Setup log file
+        if model_key in self.log_files:
+            try:
+                self.log_files[model_key].close()
+            except Exception:
+                pass
+            self.log_files.pop(model_key, None)
+
         log_file_path = config.TEMP_DIR / "logs" / f"{model_key}.log"
         log_fp = open(log_file_path, "a", encoding="utf-8")
+        self.log_files[model_key] = log_fp
 
         console.print(f"[bold blue][LAUNCH] Starting llama-server:[/bold blue] {model_cfg['name']}")
         console.print(f"   [dim]Path: {model_path}[/dim]")

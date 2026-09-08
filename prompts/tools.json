@@ -210,6 +210,26 @@
           }
         }
       ]
+    },
+    {
+      "name": "general_knowledge",
+      "description": "General knowledge and conceptual question answering specialist. Powered by Qwen3.5. Delegate any factual, general, conceptual, definitions, or world knowledge queries here.",
+      "functions": [
+        {
+          "name": "answer_query",
+          "description": "Answer a general factual, conceptual, conversational, or educational query.",
+          "arguments": {
+            "query": {"type": "string", "required": true, "description": "The question or topic to explain."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Direct knowledge answer from specialist.",
+            "properties": {
+              "answer": {"type": "string", "description": "Factual and concise answer to the query."}
+            }
+          }
+        }
+      ]
     }
   ]
 }

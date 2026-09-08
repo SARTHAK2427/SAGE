@@ -16,8 +16,6 @@ from typing import Any, Dict, List, Optional
 
 # Language tags that identify a Python block
 _PYTHON_TAGS = frozenset({"python", "python3", "py"})
-_PYTHON_PATTERN = r"```(?:python3?|py)\s*\n(.*?)```"
-_GENERIC_PATTERN = r"```(?:\w+)?\s*\n(.*?)```"
 
 
 @dataclass
@@ -144,10 +142,6 @@ def extract_code(raw_response: str) -> CodeExtractResult:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _find_blocks(text: str, pattern: str) -> List[str]:
-    """Return non-empty stripped code strings matching *pattern*."""
-    matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
-    return [m.strip() for m in matches if m.strip()]
 
 
 def _normalise(code: str) -> str:

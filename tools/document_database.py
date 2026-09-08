@@ -26,7 +26,14 @@ from typing import Any
 
 
 def _dataclass_to_dict(obj: Any) -> dict:
-    """Convert a dataclass or object with __dict__ to a JSON-safe dict, stripping None values."""
+    """Convert a dataclass or object with __dict__ to a JSON-safe dict, stripping None values.
+    
+    If the object defines a custom to_dict() method (e.g. RagResult with computed
+    similarity properties), calls it first to preserve derived/property fields.
+    """
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        d = obj.to_dict()
+        return {k: v for k, v in d.items() if v is not None}
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         d = dataclasses.asdict(obj)
         return {k: v for k, v in d.items() if v is not None}
@@ -35,6 +42,7 @@ def _dataclass_to_dict(obj: Any) -> dict:
     if hasattr(obj, "__dict__"):
         return {k: v for k, v in vars(obj).items() if v is not None and not k.startswith("_")}
     return {"value": str(obj)}
+
 
 
 # ─── Semantic RAG Search ──────────────────────────────────────────────────────
@@ -138,15 +146,16 @@ def tool_exact_search(
 
 def tool_artifact_fetch(
     db,
-    doc_id: str,
     element_id: str,
+    doc_id: str | None = None,
+    **kwargs,
 ) -> dict:
     """Fetch the exact canonical element by known ID.
 
     Args:
         db:         SageDocumentDB instance (injected)
-        doc_id:     Document identifier
-        element_id: Element identifier (e.g. txt_000001, img_000003)
+        element_id: Element identifier (e.g. txt_000001, img_000003, or doc_id/img_000003)
+        doc_id:     Optional document identifier (auto-discovered if omitted)
 
     Returns:
         {"status": "success", "element": {...}}
@@ -154,10 +163,32 @@ def tool_artifact_fetch(
         {"status": "error", "error": "..."}
     """
     try:
+        # Handle composite "doc_id/element_id" or "doc_id:element_id"
+        if element_id and "/" in str(element_id):
+            doc_id, element_id = str(element_id).split("/", 1)
+        elif element_id and ":" in str(element_id) and not str(element_id).startswith("http"):
+            doc_id, element_id = str(element_id).split(":", 1)
+
+        # Auto-discover doc_id from artifact store if missing
+        if not doc_id:
+            all_doc_ids = db.list_doc_ids() if hasattr(db, "list_doc_ids") else [p.name for p in db._store.root.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
+            for p_name in all_doc_ids:
+                    try:
+                        m = db._store.load_manifest(p_name)
+                        if element_id in m.get("element_index", {}):
+                            doc_id = p_name
+                            break
+                    except Exception:
+                        pass
+
+        if not doc_id:
+            return {"status": "error", "error": f"Element '{element_id}' could not be located in any indexed document"}
+
         element = db.artifact_fetch(doc_id, element_id)
         # Strip internal filesystem paths before returning to agent
         if isinstance(element, dict):
             element.pop("local_path", None)
+            element["doc_id"] = doc_id
         return {
             "status": "success",
             "element": element,
@@ -178,15 +209,18 @@ def tool_artifact_fetch(
 
 def tool_list_artifacts(
     db,
-    doc_id: str,
+    doc_id: str | None = None,
     artifact_type: str | None = None,
+    type: str | None = None,
+    **kwargs,
 ) -> dict:
-    """Enumerate artifacts in a document.
+    """Enumerate artifacts in a document or across all documents.
 
     Args:
         db:            SageDocumentDB instance (injected)
-        doc_id:        Document identifier
+        doc_id:        Optional document identifier (lists across all docs if omitted)
         artifact_type: Optional filter: "text", "image", "table", "code"
+        type:          Alias for artifact_type matching tools.json schema
 
     Returns:
         {"status": "success", "doc_id": str, "artifacts": [...], "count": int}
@@ -197,8 +231,28 @@ def tool_list_artifacts(
         - Deterministic ordering by reading order
         - Does not dump entire document content
     """
+    effective_type = artifact_type or type
     try:
-        artifacts = db.list_artifacts(doc_id, artifact_type=artifact_type)
+        if not doc_id:
+            all_docs = db.list_doc_ids() if hasattr(db, "list_doc_ids") else [p.name for p in db._store.root.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
+            if not all_docs:
+                return {"status": "error", "error": "No documents found in store", "artifacts": [], "count": 0}
+            all_artifacts = []
+            for d in all_docs:
+                d_arts = db.list_artifacts(d, artifact_type=effective_type)
+                for a in d_arts:
+                    a["doc_id"] = d
+                all_artifacts.extend(d_arts)
+            return {
+                "status": "success",
+                "doc_id": "all",
+                "artifacts": all_artifacts,
+                "count": len(all_artifacts),
+            }
+
+        artifacts = db.list_artifacts(doc_id, artifact_type=effective_type)
+        for a in artifacts:
+            a["doc_id"] = doc_id
         return {
             "status": "success",
             "doc_id": doc_id,

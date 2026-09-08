@@ -14,10 +14,11 @@ class ModelClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         json_mode: bool = False,
-        extra_body: Optional[Dict[str, Any]] = None
+        extra_body: Optional[Dict[str, Any]] = None,
+        model_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Sends a standard or multimodal chat completion request to llama-server.
+        Sends a standard or multimodal chat completion request to llama-server or remote GPU worker.
         Returns a dict containing:
         - 'content': generated text string
         - 'duration': total round-trip time in seconds
@@ -25,6 +26,24 @@ class ModelClient:
         - 'timings': llama.cpp performance timings if available
         - 'raw': complete raw response dict
         """
+        if config.is_remote_backend():
+            from core.remote_model_transport import remote_model_transport
+            resolved_key = model_key
+            if not resolved_key:
+                from model_manager import model_manager
+                resolved_key = model_manager.current_model_key
+            if not resolved_key:
+                raise RuntimeError(
+                    "ModelClient: model_key is unresolvable. Pass model_key explicitly "
+                    "or ensure model_manager.current_model_key is set before calling chat_completion."
+                )
+            return remote_model_transport.dispatch(
+                model_key=resolved_key,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
         url = f"{self.base_url}/v1/chat/completions"
         payload: Dict[str, Any] = {
             "messages": messages,
@@ -88,6 +107,7 @@ class ModelClient:
                 max_tokens=max_tokens,
                 json_mode=json_mode,
                 extra_body=extra_body,
+                model_key=model_key,
             )
             resp_time = iso_now()
             raw_data = res.get("raw", {})

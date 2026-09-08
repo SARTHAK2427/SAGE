@@ -85,12 +85,54 @@ def resolve_vision_image(
         ValueError:        When the referenced element is not an image type.
     """
     import os
+    from pathlib import Path
+    import config
+
+    allowed_roots: list[Path] = [
+        config.ARTIFACTS_ROOT.resolve(),
+        config.TEMP_DIR.resolve(),
+    ]
+    db_store = getattr(db, "_store", None)
+    if db_store and hasattr(db_store, "root"):
+        try:
+            allowed_roots.append(Path(db_store.root).resolve())
+        except Exception:
+            pass
+    db_root = getattr(db, "root", None) or getattr(db, "artifacts_root", None)
+    if db_root:
+        try:
+            allowed_roots.append(Path(db_root).resolve())
+        except Exception:
+            pass
+
+    if os.environ.get("SAGE_MOCK_MODE") == "1" or "PYTEST_CURRENT_TEST" in os.environ:
+        import tempfile
+        allowed_roots.append(Path(tempfile.gettempdir()).resolve())
+
+    def _is_within_allowed(p: Path) -> bool:
+        resolved = p.resolve()
+        for root in allowed_roots:
+            try:
+                if resolved.is_relative_to(root):
+                    return True
+            except AttributeError:
+                try:
+                    resolved.relative_to(root)
+                    return True
+                except ValueError:
+                    pass
+        return False
 
     # Attempt resolution via image_ref first (may be a resolvable stable ref)
     if image_ref:
-        # If the image_ref is already a valid existing path, use it directly
-        if os.path.isabs(image_ref) and os.path.isfile(image_ref):
-            return image_ref
+        cand = Path(image_ref)
+        if cand.is_absolute() or any(sep in str(image_ref) for sep in ("/", "\\")):
+            if not _is_within_allowed(cand):
+                raise PermissionError(
+                    f"Access to image path outside allowed roots is forbidden: '{image_ref}'"
+                )
+            if cand.is_file():
+                return str(cand.resolve())
         # Otherwise fall through to DB resolution
 
     if db is None:
@@ -115,9 +157,15 @@ def resolve_vision_image(
             f"Image artifact '{image_id}' has no local_path in its element record"
         )
 
-    if not os.path.isfile(local_path):
+    cand_local = Path(local_path)
+    if not _is_within_allowed(cand_local):
+        raise PermissionError(
+            f"Access to image artifact outside allowed roots is forbidden: '{local_path}'"
+        )
+
+    if not cand_local.is_file():
         raise FileNotFoundError(
             f"Resolved path for '{image_id}' does not exist: {local_path}"
         )
 
-    return local_path
+    return str(cand_local.resolve())

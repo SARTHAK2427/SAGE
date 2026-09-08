@@ -17,6 +17,7 @@ Rules:
 
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 
 from .config import ARTIFACTS_ROOT
@@ -56,8 +57,14 @@ def add_image_analysis(
     5. Compose searchable text (only if indexing).
     6. Upsert into sage_derived via chroma_store (only if indexing).
     """
-    root = Path(artifacts_root)
-    doc_dir = root / doc_id
+    root = Path(artifacts_root).resolve()
+    if not doc_id or not isinstance(doc_id, str) or not re.match(r"^[a-zA-Z0-9_-]+$", doc_id):
+        raise ValueError(f"Invalid or unsafe doc_id: {doc_id!r}")
+    if not image_id or not isinstance(image_id, str) or not re.match(r"^[a-zA-Z0-9_.-]+$", image_id):
+        raise ValueError(f"Invalid or unsafe image_id: {image_id!r}")
+    doc_dir = (root / doc_id).resolve()
+    if not doc_dir.is_relative_to(root):
+        raise ValueError(f"Path traversal detected in doc_id: {doc_id!r}")
 
     # --- Step 1: Validate ---
     manifest_path = doc_dir / "manifest.json"

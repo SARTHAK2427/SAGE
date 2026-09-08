@@ -73,11 +73,16 @@ class RunState:
 
     registered_documents: list[RegisteredDocument] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    referenced_images: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     current_model: str | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            self.request_id = self.run_id
 
     # ── Document registration ─────────────────────────────────────────
 
@@ -140,15 +145,12 @@ class RunState:
         error: str | None = None,
     ) -> None:
         """Record the completion of a tool call."""
-        for record in self.tool_calls:
-            if record.call_id == call_id:
-                record.end_time = time.time()
-                record.duration_ms = (record.end_time - record.start_time) * 1000
-                record.status = status
-                record.result_summary = result_summary
-                record.error = error
-                break
-        self.updated_at = time.time()
+        self.record_tool_result(
+            call_id=call_id,
+            status=status,
+            result_summary=result_summary,
+            error=error,
+        )
 
     def record_tool_result(
         self,

@@ -5,7 +5,6 @@
     "decide tool usage",
     "interpret tool results",
     "synthesize and compare evidence",
-    "write, explain, and summarize",
     "decide when enough evidence exists",
     "produce the final answer"
   ],
@@ -51,6 +50,12 @@
       "tool": "code_specialist",
       "function": "solve_code_task",
       "when": "Substantial coding work is required that benefits from a dedicated coding model."
+    },
+    {
+      "capability": "general knowledge, factual, conceptual, and educational question answering",
+      "tool": "general_knowledge",
+      "function": "answer_query",
+      "when": "Any general factual query, definition, explanation, world knowledge, or conceptual question that does not rely on uploaded documents."
     }
   ],
   "not_available": [

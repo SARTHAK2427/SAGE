@@ -16,7 +16,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from rich.console import Console
 from rich.panel import Panel
@@ -32,6 +32,7 @@ from code_executor.sandbox import DockerSandbox
 from core.dispatcher import ToolRegistry, ToolResult
 from core.run_state import RunState, RegisteredDocument
 from core.json_repair import clean_json_string, parse_agent_json, build_repair_prompt
+from core.model_runtime_cache import model_runtime_cache
 from tools.registry import create_default_registry
 from core.mappers import (
     map_tool_result_for_gemma,
@@ -43,6 +44,7 @@ from core.mappers import (
     map_vision_result,
     map_coder_result,
     map_math_result,
+    map_general_knowledge_result,
     map_error_for_gemma,
     strip_internal_fields,
 )
@@ -68,7 +70,10 @@ class Orchestrator:
             base_prompt += f"\n\nAUTHORITATIVE abilities.json:\n{abilities_def}"
         self.agent_system_prompt = base_prompt
         self.coder_system_prompt = self._load_prompt("coder_system.txt")
-        self.document_system_prompt = self._load_prompt("document_system.txt")
+        self.final_synthesizer_system_prompt = (
+            self._load_prompt("qwen3.5/final_synthesizer.txt")
+            or self._load_prompt("final_synthesizer_system.txt")
+        )
 
         # Code Execution Pipeline (Docker sandbox + LLM auto-repair)
         try:
@@ -150,8 +155,21 @@ class Orchestrator:
                 border_style="cyan"
             ))
 
+            disp_args = dict(arguments)
+            if resolved_fn == "list_artifacts":
+                if "type" in disp_args and "artifact_type" not in disp_args:
+                    disp_args["artifact_type"] = disp_args["type"]
+            elif resolved_fn == "artifact_fetch":
+                elem_id = disp_args.get("element_id", "")
+                if elem_id in file_map:
+                    f_ent = file_map[elem_id]
+                    if f_ent.get("doc_id"):
+                        disp_args["doc_id"] = f_ent["doc_id"]
+                    if f_ent.get("image_id"):
+                        disp_args["element_id"] = f_ent["image_id"]
+
             disp_res: ToolResult = self.registry.dispatch(
-                "document_database", resolved_fn, **arguments
+                "document_database", resolved_fn, **disp_args
             )
             rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {"status": disp_res.status}
             if disp_res.status not in ("success", "partial"):
@@ -161,13 +179,30 @@ class Orchestrator:
             trace.append({"actor": "document_db", "action": resolved_fn,
                            "status": disp_res.status, "duration_ms": disp_res.duration_ms})
 
+            # Record referenced image if artifact_fetch retrieved an image
+            if resolved_fn == "artifact_fetch" and (disp_res.status == "success" or rich_socket.get("status") == "success"):
+                elem_dict = rich_socket.get("element") or {}
+                elem_type = elem_dict.get("type")
+                elem_id = disp_args.get("element_id") or elem_dict.get("id")
+                d_id = disp_args.get("doc_id") or elem_dict.get("doc_id")
+                if elem_type == "image" or (elem_id and str(elem_id).startswith("img_")):
+                    if not hasattr(run_state, "referenced_images"):
+                        run_state.referenced_images = []
+                    if d_id and not any(r.get("doc_id") == d_id and r.get("image_id") == elem_id for r in run_state.referenced_images):
+                        run_state.referenced_images.append({
+                            "doc_id": d_id,
+                            "image_id": elem_id,
+                            "caption": elem_dict.get("caption") or f"Referenced image {elem_id}",
+                            "url": f"/api/artifacts/{d_id}/images/{elem_id}",
+                        })
+
             # Select mapper by function name
             mapper_map = {
                 "rag_search": (map_rag_result, {}),
                 "exact_search": (map_exact_result, {}),
                 "artifact_fetch": (map_artifact_fetch_result, {
-                    "doc_id": arguments.get("doc_id", ""),
-                    "element_id": arguments.get("element_id", ""),
+                    "doc_id": disp_args.get("doc_id", ""),
+                    "element_id": disp_args.get("element_id", ""),
                 }),
                 "list_artifacts": (map_list_artifacts_result, {}),
             }
@@ -198,14 +233,65 @@ class Orchestrator:
                 if run_state.registered_documents else ""
             )
             image_id = arguments.get("image_id") or (arguments.get("image_ids")[0] if arguments.get("image_ids") else "")
-            if not image_id and doc_id:
+
+            # Support composite identifiers like "doc_id/img_000001" or "doc_id:img_000001"
+            if image_id and "/" in str(image_id):
+                doc_id, image_id = str(image_id).split("/", 1)
+            elif image_id and ":" in str(image_id) and not str(image_id).startswith("http"):
+                doc_id, image_id = str(image_id).split(":", 1)
+
+            # 1. Attachment ref mapping: resolve if image_id or doc_id maps to file_map
+            if image_id and image_id in file_map:
+                f_entry = file_map[image_id]
+                if f_entry.get("doc_id"):
+                    doc_id = f_entry["doc_id"]
+                image_id = f_entry.get("image_id", "")
+            elif doc_id and doc_id in file_map:
+                f_entry = file_map[doc_id]
+                if f_entry.get("doc_id"):
+                    doc_id = f_entry["doc_id"]
+                if not image_id and f_entry.get("image_id"):
+                    image_id = f_entry["image_id"]
+
+            # 2. If doc_id is still missing, auto-discover it from the artifact store
+            if not doc_id:
                 try:
                     from db_service import document_db
-                    arts = document_db.list_artifacts(doc_id=doc_id, element_type="image")
-                    if arts.get("artifacts"):
-                        image_id = arts["artifacts"][0]["element_id"]
-                except Exception:
-                    pass
+                    docs = document_db.list_doc_ids() if hasattr(document_db, "list_doc_ids") else [p.name for p in document_db._store.root.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
+                    for d in docs:
+                        m = document_db._store.load_manifest(d)
+                        if image_id and image_id in m.get("element_index", {}):
+                            doc_id = d
+                            break
+                    if not doc_id and docs:
+                        doc_id = docs[-1]
+                except Exception as ex:
+                    logger.warning("Failed to auto-discover doc_id: %s", ex)
+
+            # 3. Query document database to resolve canonical image element
+            if doc_id:
+                try:
+                    from db_service import document_db
+                    arts = document_db.list_artifacts(doc_id=doc_id, artifact_type="image")
+                    if arts and isinstance(arts, list):
+                        valid_ids = [a.get("element_id") for a in arts if isinstance(a, dict)]
+                        if not image_id or image_id not in valid_ids:
+                            if len(arts) == 1 or image_id in ("file_1", "1", "image_1", "img_1"):
+                                image_id = arts[0]["element_id"]
+                            else:
+                                import re
+                                match = re.search(r"\d+", str(image_id))
+                                if match:
+                                    idx = int(match.group()) - 1
+                                    if 0 <= idx < len(arts):
+                                        image_id = arts[idx]["element_id"]
+                                    else:
+                                        image_id = arts[0]["element_id"]
+                                else:
+                                    image_id = arts[0]["element_id"]
+                except Exception as ex:
+                    logger.warning("Failed to resolve image_id in orchestrator: %s", ex)
+
             instruction = arguments.get("instruction") or arguments.get("prompt") or arguments.get("task") or task or "Extract all text, numbers, and details from this image."
             image_ref = arguments.get("image_ref")
 
@@ -229,12 +315,38 @@ class Orchestrator:
                            "image_id": image_id, "status": disp_res.status,
                            "duration_ms": disp_res.duration_ms})
 
-            return map_tool_result_for_gemma(
+            # Record referenced confident image if vision succeeded
+            if disp_res.status == "success" or rich_socket.get("status") == "success":
+                if not hasattr(run_state, "referenced_images"):
+                    run_state.referenced_images = []
+                img_record = {
+                    "doc_id": doc_id,
+                    "image_id": image_id,
+                    "caption": instruction,
+                    "url": f"/api/artifacts/{doc_id}/images/{image_id}",
+                }
+                if not any(r.get("doc_id") == doc_id and r.get("image_id") == image_id for r in run_state.referenced_images):
+                    run_state.referenced_images.append(img_record)
+
+            from core.model_runtime_cache import model_runtime_cache
+            req_id = getattr(run_state, "request_id", None) or getattr(run_state, "run_id", None) or "default_req"
+            v_art = model_runtime_cache.store_vision_artifact(
+                request_id=req_id,
+                call_index=call_index,
+                analysis=rich_socket.get("analysis") or "",
+                image_id=image_id,
+            )
+
+            mapped = map_tool_result_for_gemma(
                 tool_name, resolved_fn, rich_socket,
                 call_index=call_index,
                 mapper_fn=map_vision_result,
                 doc_id=doc_id, image_id=image_id,
             )
+            if isinstance(mapped.get("result"), dict):
+                mapped["result"]["artifact_id"] = v_art["artifact_id"]
+                mapped["result"]["review_status"] = "review_required"
+            return mapped
 
         # ── 3. code_specialist group ──────────────────────────────────────────
         elif tool_name in ("code_specialist", "coder"):
@@ -269,10 +381,30 @@ class Orchestrator:
                 "stdout_preview": (res_dict.get("stdout") or "")[:200],
             })
 
-            return map_tool_result_for_gemma(
+            # Cache code artifact in model_runtime
+            from core.model_runtime_cache import model_runtime_cache
+            raw_code = res_dict.get("final_code") or res_dict.get("code") or ""
+            req_id = getattr(run_state, "request_id", None) or getattr(run_state, "run_id", None) or "default_req"
+            c_art = model_runtime_cache.store_code_artifact(
+                request_id=req_id,
+                call_index=call_index,
+                code=raw_code,
+                language=res_dict.get("language", language or "python"),
+                execution_status=exec_status,
+                stdout=res_dict.get("stdout") or "",
+                stderr=res_dict.get("stderr") or "",
+                exit_code=res_dict.get("exit_code", 0),
+                attempts_used=res_dict.get("attempts", 1),
+            )
+
+            mapped = map_tool_result_for_gemma(
                 "code_specialist", "solve_code_task", rich_socket,
                 call_index=call_index, mapper_fn=map_coder_result,
             )
+            if isinstance(mapped.get("result"), dict):
+                mapped["result"]["artifact_id"] = c_art["artifact_id"]
+                mapped["result"]["review_status"] = "review_required"
+            return mapped
 
         # ── 4. math group ─────────────────────────────────────────────────────
         elif tool_name in ("math", "calculator"):
@@ -296,6 +428,42 @@ class Orchestrator:
                 call_index=call_index, mapper_fn=map_math_result,
             )
 
+        # ── 4b. general_knowledge group (Qwen3.5 2B) ──────────────────────────
+        elif tool_name in ("general_knowledge", "knowledge_specialist", "general_chat"):
+            resolved_fn = func_name or "answer_query"
+            query = arguments.get("query") or arguments.get("question") or arguments.get("prompt") or task
+            telemetry["synthesizer_calls"] = telemetry.get("synthesizer_calls", 0) + 1
+            console.print(Panel(
+                f"[bold]Tool:[/bold] general_knowledge -> answer_query\n[bold]Query:[/bold] {query}",
+                title="[bold magenta]EXECUTING TOOL: GENERAL KNOWLEDGE (Qwen3.5 2B)[/bold magenta]",
+                border_style="magenta"
+            ))
+
+            disp_res: ToolResult = self.registry.dispatch(
+                "general_knowledge", "answer_query", query=query
+            )
+            rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {
+                "query": query, "status": disp_res.status,
+                "error": disp_res.error, "answer": "",
+            }
+
+            if disp_res.duration_ms:
+                telemetry["synthesizer_duration"] = telemetry.get("synthesizer_duration", 0.0) + (disp_res.duration_ms / 1000.0)
+
+            trace.append({
+                "actor": "final_synthesizer",
+                "action": "general_knowledge",
+                "query": query,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "answer_preview": (rich_socket.get("answer") or "")[:200],
+            })
+
+            return map_tool_result_for_gemma(
+                "general_knowledge", "answer_query", rich_socket,
+                call_index=call_index, mapper_fn=map_general_knowledge_result,
+            )
+
         # ── 5. Legacy document_analyzer bridge (→ document_database/rag_search)
         elif tool_name == "document_analyzer":
             doc_ids = run_state.list_document_ids() or None
@@ -303,7 +471,7 @@ class Orchestrator:
             telemetry["document_calls"] = telemetry.get("document_calls", 0) + 1
 
             console.print(Panel(
-                f"[bold]Tool:[/bold] document_analyzer → rag_search\n[bold]Query:[/bold] {query}",
+                f"[bold]Tool:[/bold] document_analyzer -> rag_search\n[bold]Query:[/bold] {query}",
                 title="[bold cyan]EXECUTING TOOL: DOCUMENT DB SEARCH[/bold cyan]",
                 border_style="cyan"
             ))
@@ -328,6 +496,8 @@ class Orchestrator:
             args = {k: v for k, v in arguments.items()}
             if "query" not in args and task:
                 args["query"] = task
+            if tool_name == "list_artifacts" and "type" in args and "artifact_type" not in args:
+                args["artifact_type"] = args["type"]
             telemetry["document_calls"] = telemetry.get("document_calls", 0) + 1
 
             disp_res: ToolResult = self.registry.dispatch(
@@ -427,13 +597,25 @@ class Orchestrator:
         attachments_manifest: List[Dict[str, Any]],
         file_map: Dict[str, Dict[str, Any]],
         run_state: Optional[RunState] = None,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Execute the sequential multi-model orchestration loop."""
         wall_start = time.time()
+
+        def _emit(evt: Dict[str, Any]) -> None:
+            if event_callback:
+                try:
+                    event_callback(evt)
+                except Exception as exc:
+                    logger.warning("Event callback error: %s", exc)
+
         telemetry = {
             "agent_calls": 0,
             "coder_calls": 0,
             "document_calls": 0,
+            "synthesizer_calls": 0,
+            "synthesizer_duration": 0.0,
+            "synthesizer_tokens": 0,
             "model_switches_at_start": model_manager.switch_count if model_manager else 0,
             "total_wall_time": 0.0,
             "final_response_length": 0,
@@ -473,6 +655,7 @@ class Orchestrator:
 
         final_answer = None
         loop_count = 0
+        accumulated_tool_evidence: List[Dict[str, Any]] = []
 
         # Mock mode fast-path if enabled
         if _is_mock_mode():
@@ -497,6 +680,7 @@ class Orchestrator:
                 "answer": final_answer,
                 "telemetry": telemetry,
                 "trace": trace,
+                "referenced_images": getattr(run_state, "referenced_images", []),
                 "run_state": run_state.to_dict(),
             }
 
@@ -521,11 +705,21 @@ class Orchestrator:
                 border_style="blue"
             ))
 
+            _emit({
+                "event": "model_invoking",
+                "actor": "gemma",
+                "loop": loop_count,
+                "model_name": agent_cfg.get("name", "Gemma 4B"),
+                "input": last_msg["content"],
+                "timestamp": time.time(),
+            })
+
             # Call Gemma
             res = model_client.chat_completion(
                 messages=history,
                 temperature=agent_cfg.get("temperature", 0.20),
-                max_tokens=agent_cfg.get("max_tokens", 2048)
+                max_tokens=agent_cfg.get("max_tokens", 2048),
+                model_key="agent",
             )
 
             raw_output = res["content"]
@@ -542,6 +736,17 @@ class Orchestrator:
             # Parse JSON with decoupled json_repair logic
             parsed = self._parse_gemma_json(raw_output)
 
+            _emit({
+                "event": "model_output",
+                "actor": "gemma",
+                "loop": loop_count,
+                "duration": duration,
+                "usage": usage,
+                "parsed_type": parsed.get("type") if parsed else "error",
+                "output": raw_output,
+                "timestamp": time.time(),
+            })
+
             # Defensive 1-turn repair if JSON is invalid
             if parsed is None:
                 console.print("[bold red][WARN] Gemma output was not valid JSON. Attempting 1 repair turn...[/bold red]")
@@ -552,7 +757,8 @@ class Orchestrator:
                 res = model_client.chat_completion(
                     messages=history,
                     temperature=0.10,
-                    max_tokens=agent_cfg.get("max_tokens", 2048)
+                    max_tokens=agent_cfg.get("max_tokens", 2048),
+                    model_key="agent",
                 )
                 raw_output = res["content"]
                 parsed = self._parse_gemma_json(raw_output)
@@ -568,25 +774,181 @@ class Orchestrator:
             res_type = parsed.get("type")
 
             if res_type == "final":
-                final_answer = parsed.get("answer", "")
+                gemma_brief = parsed.get("answer", "")
+
+                # Assemble runtime artifacts (e.g. code generated by code_specialist)
+                req_id = getattr(run_state, "request_id", None) or getattr(run_state, "run_id", None) or "default_req"
+                from core.model_runtime_cache import model_runtime_cache
+                cached_artifacts = model_runtime_cache.get_artifacts_for_request(req_id)
+                code_artifacts = [a for a in cached_artifacts if a.get("type") == "code" and a.get("code")]
+
+                # ── Deterministic handoff to final_synthesizer (Qwen3.5 2B) ────────
+                finalizer_prompt = getattr(self, "final_synthesizer_system_prompt", "")
+                if not finalizer_prompt:
+                    finalizer_prompt = (
+                        "You are the final response composer for SAGE. "
+                        "Your task is to faithfully render the final user-facing response "
+                        "based on the controller's finalization brief and accumulated tool evidence. "
+                        "Return user-facing plain text only."
+                    )
+
+                from core.mappers.gemma_results import strip_internal_fields
+                evidence_clean = strip_internal_fields(accumulated_tool_evidence) if accumulated_tool_evidence else []
+
+                finalizer_content_parts = [
+                    f"USER OBJECTIVE:\n{user_objective.strip()}",
+                    f"CONTROLLER FINALIZATION BRIEF:\n{gemma_brief.strip() if gemma_brief else '(No additional brief provided)'}",
+                ]
+                if evidence_clean:
+                    finalizer_content_parts.append(
+                        f"ACCUMULATED TOOL EVIDENCE:\n{json.dumps(evidence_clean, indent=2)}"
+                    )
+                else:
+                    finalizer_content_parts.append("ACCUMULATED TOOL EVIDENCE:\nNone (no tools required)")
+
+                finalizer_user_content = "\n\n".join(finalizer_content_parts)
+                finalizer_messages = [
+                    {"role": "system", "content": finalizer_prompt},
+                    {"role": "user", "content": finalizer_user_content},
+                ]
+
+                final_answer = gemma_brief
+                synth_duration = 0.0
+                synth_usage = {}
+                synth_output = ""
+                try:
+                    synth_cfg = config.MODELS.get("final_synthesizer", {})
+                    model_manager.ensure_model("final_synthesizer")
+                    telemetry["synthesizer_calls"] = telemetry.get("synthesizer_calls", 0) + 1
+                    console.print(Panel(
+                        f"[dim]{finalizer_user_content[:400]}...[/dim]",
+                        title="[bold magenta]HANDOFF -> FINAL SYNTHESIZER (Qwen3.5 2B)[/bold magenta]",
+                        border_style="magenta",
+                    ))
+                    _emit({
+                        "event": "model_invoking",
+                        "actor": "final_synthesizer",
+                        "loop": loop_count,
+                        "model_name": synth_cfg.get("name", "Qwen3.5 2B"),
+                        "input": finalizer_user_content[:500],
+                        "timestamp": time.time(),
+                    })
+                    synth_res = model_client.chat_completion(
+                        messages=finalizer_messages,
+                        temperature=synth_cfg.get("temperature", 0.20),
+                        max_tokens=synth_cfg.get("max_tokens", 2048),
+                        model_key="final_synthesizer",
+                    )
+                    synth_output = (synth_res.get("content") or "").strip()
+                    synth_duration = float(synth_res.get("duration", 0.0))
+                    synth_usage = synth_res.get("usage", {})
+                    telemetry["synthesizer_duration"] = synth_duration
+                    telemetry["synthesizer_tokens"] = synth_usage.get("completion_tokens", 0)
+
+                    _emit({
+                        "event": "model_output",
+                        "actor": "final_synthesizer",
+                        "loop": loop_count,
+                        "duration": synth_duration,
+                        "usage": synth_usage,
+                        "output": synth_output or gemma_brief,
+                        "timestamp": time.time(),
+                    })
+
+                    if synth_output:
+                        final_answer = synth_output
+                    else:
+                        logger.warning("final_synthesizer returned empty content; falling back to Gemma brief.")
+                        final_answer = gemma_brief
+                except Exception as exc:
+                    logger.warning(
+                        "final_synthesizer invocation failed: %s; falling back safely to Gemma terminal content.",
+                        exc,
+                    )
+                    final_answer = gemma_brief
+
+                # Ensure verified code artifacts are present if code_specialist was executed
+                if code_artifacts:
+                    code_blocks = []
+                    for art in code_artifacts:
+                        c_text = (art.get("code") or "").strip()
+                        c_lang = art.get("language", "python")
+                        if c_text and c_text not in final_answer:
+                            code_blocks.append(f"```{c_lang}\n{c_text}\n```")
+                    if code_blocks:
+                        joined_blocks = "\n\n".join(code_blocks)
+                        if final_answer and final_answer.strip():
+                            final_answer = f"{final_answer.strip()}\n\n### Code\n{joined_blocks}"
+                        else:
+                            final_answer = joined_blocks
+
                 trace.append({
-                    "actor": "gemma",
+                    "actor": "final_synthesizer",
                     "action": "final_synthesis",
                     "loop": loop_count,
-                    "answer_preview": final_answer[:200] + "..." if len(final_answer) > 200 else final_answer
+                    "duration": synth_duration,
+                    "usage": synth_usage,
+                    "input": finalizer_user_content,
+                    "output": final_answer,
+                    "controller_brief": gemma_brief,
+                    "answer_preview": final_answer[:200] + "..." if len(final_answer) > 200 else final_answer,
                 })
+                _emit({
+                    "event": "final_synthesis",
+                    "actor": "final_synthesizer",
+                    "loop": loop_count,
+                    "answer": final_answer,
+                    "timestamp": time.time(),
+                })
+                # Re-arm Gemma 4B in the background while user reads the final answer
+                model_manager.rearm_agent_background()
                 break
 
             elif res_type == "tool_calls":
                 calls = parsed.get("calls", [])
-                if not calls:
-                    raise RuntimeError("Gemma returned tool_calls with an empty 'calls' array.")
+                if not calls or not isinstance(calls, list):
+                    logger.warning("Gemma returned tool_calls with empty or invalid 'calls' on loop %d", loop_count)
+                    trace.append({
+                        "actor": "gemma",
+                        "action": "empty_tool_calls_detected",
+                        "loop": loop_count,
+                        "output": raw_output,
+                    })
+                    error_packet = {
+                        "type": "tool_results",
+                        "results": [
+                            {
+                                "call_index": 0,
+                                "tool": "system",
+                                "function": "tool_calls",
+                                "status": "error",
+                                "error": {
+                                    "code": "EMPTY_TOOL_CALLS",
+                                    "message": "The 'tool_calls' response contained an empty 'calls' list. Please emit at least one valid tool call or provide a 'final' response.",
+                                    "retryable": True,
+                                },
+                            }
+                        ],
+                    }
+                    history.append({"role": "assistant", "content": raw_output})
+                    history.append({"role": "user", "content": json.dumps(error_packet, indent=2)})
+                    continue
 
                 trace.append({
                     "actor": "gemma",
                     "action": "requested_tools",
                     "loop": loop_count,
+                    "input": last_msg["content"],
+                    "output": raw_output,
                     "calls": calls
+                })
+
+                _emit({
+                    "event": "tools_requested",
+                    "actor": "gemma",
+                    "loop": loop_count,
+                    "calls": calls,
+                    "timestamp": time.time(),
                 })
 
                 history.append({"role": "assistant", "content": json.dumps(parsed, indent=2)})
@@ -594,11 +956,24 @@ class Orchestrator:
 
                 for call in calls:
                     t_call_start = time.time()
+                    tool_act = call.get("tool", "unknown")
+                    fn_act = call.get("function", "execute")
+                    call_args = {k: v for k, v in call.items() if k != "tool"}
+
+                    _emit({
+                        "event": "tool_executing",
+                        "tool": tool_act,
+                        "function": fn_act,
+                        "input": call_args,
+                        "call_index": len(tool_results_list),
+                        "timestamp": time.time(),
+                    })
+
                     call_record = run_state.record_tool_call(
                         call_id=f"call_{uuid.uuid4().hex[:8]}",
-                        tool_name=call.get("tool", "unknown"),
-                        function_name=call.get("function", "execute"),
-                        sanitized_args={k: v for k, v in call.items() if k != "tool"},
+                        tool_name=tool_act,
+                        function_name=fn_act,
+                        sanitized_args=call_args,
                         start_time=t_call_start,
                     )
 
@@ -620,7 +995,23 @@ class Orchestrator:
                         end_time=t_call_end,
                     )
 
+                    _emit({
+                        "event": "tool_result",
+                        "tool": tool_act,
+                        "function": fn_act,
+                        "status": mapped_result.get("status", "success"),
+                        "output": mapped_result.get("result"),
+                        "duration_ms": (t_call_end - t_call_start) * 1000,
+                        "call_index": len(tool_results_list),
+                        "timestamp": time.time(),
+                    })
+
                     tool_results_list.append(mapped_result)
+
+                accumulated_tool_evidence.extend(tool_results_list)
+
+                # Re-arm Gemma 4B in the background while building and printing the tool packet
+                model_manager.rearm_agent_background()
 
                 # Build compact Gemma-facing packet (never raw sockets)
                 tool_result_payload = build_tool_results_packet(tool_results_list)
@@ -640,6 +1031,39 @@ class Orchestrator:
         if final_answer is None:
             raise RuntimeError(f"Maximum agent loops ({config.MAX_AGENT_LOOPS}) reached without generating a final response.")
 
+        # Fallback detection for referenced images mentioned in final answer
+        if final_answer:
+            import re
+            mentioned_imgs = re.findall(r"img_\d{6}", final_answer)
+            if mentioned_imgs:
+                if not hasattr(run_state, "referenced_images"):
+                    run_state.referenced_images = []
+                active_doc = (
+                    run_state.registered_documents[0].doc_id
+                    if hasattr(run_state, "registered_documents") and run_state.registered_documents
+                    else None
+                )
+                from db_service import document_db
+                for m_img in mentioned_imgs:
+                    target_doc = active_doc
+                    if not target_doc:
+                        all_docs = document_db.list_doc_ids() if hasattr(document_db, "list_doc_ids") else [p.name for p in document_db._store.root.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
+                        for p_name in all_docs:
+                            try:
+                                m = document_db._store.load_manifest(p_name)
+                                if m_img in m.get("element_index", {}):
+                                    target_doc = p_name
+                                    break
+                            except Exception:
+                                pass
+                    if target_doc and not any(r.get("image_id") == m_img for r in run_state.referenced_images):
+                        run_state.referenced_images.append({
+                            "doc_id": target_doc,
+                            "image_id": m_img,
+                            "caption": f"Referenced {m_img}",
+                            "url": f"/api/artifacts/{target_doc}/images/{m_img}",
+                        })
+
         wall_end = time.time()
         telemetry["total_wall_time"] = wall_end - wall_start
         telemetry["final_response_length"] = len(final_answer)
@@ -650,9 +1074,12 @@ class Orchestrator:
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="bold white")
 
-        table.add_row("Agent (Gemma) Calls", str(telemetry["agent_calls"]))
-        table.add_row("Document Analyzer / DB Calls", str(telemetry["document_calls"]))
-        table.add_row("Coder Calls", str(telemetry["coder_calls"]))
+        table.add_row("Agent (Gemma 4B) Calls", str(telemetry["agent_calls"]))
+        table.add_row("Document Analyzer (Qwen3-VL) Calls", str(telemetry["document_calls"]))
+        table.add_row("Coder (Qwen2.5-Coder) Calls", str(telemetry["coder_calls"]))
+        table.add_row("Final Synthesizer (Qwen3.5 2B) Calls", str(telemetry.get("synthesizer_calls", 0)))
+        if telemetry.get("synthesizer_duration"):
+            table.add_row("Qwen3.5 2B Synthesis Time", f"{telemetry['synthesizer_duration']:.2f} seconds")
         table.add_row("Model Switches", str(telemetry["model_switches"]))
         table.add_row("Total Wall Time", f"{telemetry['total_wall_time']:.2f} seconds")
         table.add_row("Final Answer Length", f"{telemetry['final_response_length']} chars")
@@ -663,11 +1090,22 @@ class Orchestrator:
         console.print(table)
         console.print("="*60 + "\n", style="bold green")
 
+        _emit({
+            "event": "run_complete",
+            "status": "success",
+            "answer": final_answer,
+            "telemetry": telemetry,
+            "trace": trace,
+            "referenced_images": getattr(run_state, "referenced_images", []),
+            "timestamp": time.time(),
+        })
+
         return {
             "status": "success",
             "answer": final_answer,
             "telemetry": telemetry,
             "trace": trace,
+            "referenced_images": getattr(run_state, "referenced_images", []),
             "run_state": run_state.to_dict(),
         }
 

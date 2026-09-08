@@ -520,5 +520,7 @@ runner.run("T11 — extract_failed on empty LLM response", t11_extract_failed)
 
 # ─── Final summary ────────────────────────────────────────────────────────────
 
-runner.summary()
-sys.exit(runner.exit_code())
+if __name__ == "__main__":
+    runner.summary()
+    sys.exit(runner.exit_code())
+

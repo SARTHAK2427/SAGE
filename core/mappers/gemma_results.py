@@ -444,6 +444,9 @@ def map_artifact_fetch_result(data: dict, doc_id: str = "", element_id: str = ""
         derived_avail = element.get("derived_available")
         if derived_avail is not None:
             base["derived_available"] = derived_avail
+        derived_analysis = element.get("derived_analysis")
+        if derived_analysis:
+            base["analysis"] = derived_analysis
         # NOTE: local_path is intentionally NOT included here.
 
     return {"artifact": base}
@@ -473,14 +476,18 @@ def map_list_artifacts_result(data: dict) -> dict:
     """
     result_block = data.get("result") or {}
     raw_artifacts = result_block.get("artifacts") or data.get("artifacts") or []
+    default_doc_id = result_block.get("doc_id") or data.get("doc_id")
 
     artifacts = []
     for a in raw_artifacts:
+        doc_id_val = a.get("doc_id") or default_doc_id
         entry: dict[str, Any] = {
             "element_id": a.get("element_id", ""),
             "type": a.get("type", ""),
             "order": a.get("order", 0),
         }
+        if doc_id_val:
+            entry["doc_id"] = doc_id_val
         # Positional metadata — only when present
         for pos_key in ("page", "slide", "sheet"):
             if a.get(pos_key) is not None:
@@ -666,7 +673,17 @@ def map_math_result(data: dict) -> dict:
     return {"expression": expression, "value": value}
 
 
-# ── Canonical 7 Function Mappers Registry ─────────────────────────────────────
+def map_general_knowledge_result(data: dict) -> dict:
+    """Project general_knowledge/answer_query socket → Gemma-facing clean answer.
+
+    Gemma-facing shape:
+        {"answer": "..."}
+    """
+    answer = data.get("answer") or data.get("content") or data.get("result") or ""
+    return {"answer": str(answer)}
+
+
+# ── Canonical Function Mappers Registry ───────────────────────────────────────
 
 CANONICAL_GEMMA_MAPPERS: dict[tuple[str, str], Any] = {
     ("document_database", "rag_search"): map_rag_result,
@@ -676,4 +693,5 @@ CANONICAL_GEMMA_MAPPERS: dict[tuple[str, str], Any] = {
     ("vision_ocr", "analyze_image"): map_vision_result,
     ("code_specialist", "solve_code_task"): map_coder_result,
     ("math", "calculate"): map_math_result,
+    ("general_knowledge", "answer_query"): map_general_knowledge_result,
 }

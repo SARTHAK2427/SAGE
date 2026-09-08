@@ -96,7 +96,15 @@ def _safe_eval(node: ast.AST) -> Any:
             raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
         left = _safe_eval(node.left)
         right = _safe_eval(node.right)
+        if isinstance(node.op, ast.Pow):
+            # Guard against resource exhaustion via unbounded exponentiation (CPU/memory DoS)
+            if isinstance(right, (int, float)) and abs(right) > 1000:
+                raise ValueError(f"Exponent exceeds safety limit of 1000 (got {right})")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                if abs(left) > 10000 and right > 100:
+                    raise ValueError(f"Exponentiation exceeds computation limits (base {left}, exp {right})")
         return op_fn(left, right)
+
 
     # Whitelisted function call: abs(x), round(x, n), min(a, b, c), etc.
     if isinstance(node, ast.Call):

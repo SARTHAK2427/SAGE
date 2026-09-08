@@ -115,6 +115,7 @@ class RealCoder(CoderInterface):
             messages=messages,
             temperature=coder_cfg.get("temperature", 0.10),
             max_tokens=coder_cfg.get("max_tokens", 4096),
+            model_key="coder",
         )
         return res["content"]
 

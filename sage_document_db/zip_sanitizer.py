@@ -29,6 +29,12 @@ from .utils import sha256_file, safe_mkdir
 
 OFFICE_ZIP_EXTENSIONS = {".docx", ".pptx", ".xlsx"}
 
+# Decompression bomb defense limits
+MAX_ZIP_MEMBERS = 10_000
+MAX_ZIP_MEMBER_BYTES = 100 * 1024 * 1024          # 100 MB per member
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 250 * 1024 * 1024  # 250 MB total for entire package
+MAX_ZIP_COMPRESSION_RATIO = 100  # uncompressed / compressed ratio check
+
 
 class ZipSanitizerError(Exception):
     """Base exception for ZIP container sanitation issues."""
@@ -59,6 +65,37 @@ class SanitationResult(NamedTuple):
     repaired_sha256: Optional[str] = None
     repaired_size: Optional[int] = None
     sanitation_warning: Optional[str] = None
+
+
+def _validate_zip_limits(infolist: list[zipfile.ZipInfo], source_name: str) -> None:
+    """Enforce member count, member size, total size, and compression ratio bounds."""
+    if not infolist:
+        raise ZipSanitizerError(
+            f"ZIP package '{source_name}' contains no members."
+        )
+
+    if len(infolist) > MAX_ZIP_MEMBERS:
+        raise ZipSanitizerError(
+            f"ZIP package '{source_name}' exceeds maximum member limit ({len(infolist)} > {MAX_ZIP_MEMBERS})."
+        )
+
+    total_uncompressed = 0
+    for item in infolist:
+        if item.file_size > MAX_ZIP_MEMBER_BYTES:
+            raise ZipSanitizerError(
+                f"ZIP member '{item.filename}' in '{source_name}' exceeds individual size limit ({item.file_size} > {MAX_ZIP_MEMBER_BYTES} bytes)."
+            )
+        total_uncompressed += item.file_size
+        if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+            raise ZipSanitizerError(
+                f"ZIP package '{source_name}' exceeds maximum total uncompressed size ({total_uncompressed} > {MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES} bytes)."
+            )
+        if item.compress_size > 0:
+            ratio = item.file_size / item.compress_size
+            if ratio > MAX_ZIP_COMPRESSION_RATIO and item.file_size > (1024 * 1024):
+                raise ZipSanitizerError(
+                    f"Suspicious compression ratio ({ratio:.1f}x) for member '{item.filename}' in '{source_name}'."
+                )
 
 
 def sanitize_office_zip(source_path: Path | str) -> SanitationResult:
@@ -97,10 +134,11 @@ def sanitize_office_zip(source_path: Path | str) -> SanitationResult:
             original_size=orig_size,
         )
 
-    # 3. Test integrity via testzip()
+    # 3. Test integrity via testzip() with decompression bomb defense
     bad_member = None
     try:
         with zipfile.ZipFile(source_path, "r") as z:
+            _validate_zip_limits(z.infolist(), source_path.name)
             bad_member = z.testzip()
             if bad_member is None:
                 # Completely healthy archive; no sanitation needed
@@ -111,6 +149,8 @@ def sanitize_office_zip(source_path: Path | str) -> SanitationResult:
                     original_sha256=orig_sha,
                     original_size=orig_size,
                 )
+    except ZipSanitizerError:
+        raise
     except Exception as exc:
         bad_member = str(exc)
 
@@ -122,10 +162,7 @@ def sanitize_office_zip(source_path: Path | str) -> SanitationResult:
     try:
         with zipfile.ZipFile(source_path, "r") as zin:
             infolist = zin.infolist()
-            if not infolist:
-                raise ZipSanitizerError(
-                    f"ZIP package '{source_path.name}' contains no members."
-                )
+            _validate_zip_limits(infolist, source_path.name)
 
             with zipfile.ZipFile(sanitized_path, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in infolist:
@@ -133,9 +170,16 @@ def sanitize_office_zip(source_path: Path | str) -> SanitationResult:
                         fp = zin.open(item)
                         # Bypass the incorrect CRC-32 check only to recover the exact stored bytes
                         fp._update_crc = lambda d: None
-                        member_bytes = fp.read()
+                        member_bytes = fp.read(MAX_ZIP_MEMBER_BYTES + 1)
+                        if len(member_bytes) > MAX_ZIP_MEMBER_BYTES:
+                            fp.close()
+                            raise ZipSanitizerError(
+                                f"ZIP member '{item.filename}' exceeded uncompressed size limit during extraction."
+                            )
                         fp.close()
                     except Exception as read_err:
+                        if isinstance(read_err, ZipSanitizerError):
+                            raise
                         # NEVER silently drop/skip members! Fail explicitly.
                         raise UnrecoverableZipMemberError(
                             filename=source_path.name,

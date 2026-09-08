@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAGE — Local Multi-Model Agent</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2.4">
 </head>
 <body>
     <div class="app-container">
@@ -32,7 +32,7 @@
                 <div class="chat-history" id="chatHistory">
                     <div class="welcome-card">
                         <h3>Welcome to SAGE</h3>
-                        <p>Three local models cooperating on genuine tasks through sequential orchestration:</p>
+                        <p>Four specialized models cooperating on genuine tasks through sequential orchestration:</p>
                         <div class="model-grid-summary">
                             <div class="summary-card">
                                 <strong>🧠 Gemma 4B</strong>
@@ -45,6 +45,10 @@
                             <div class="summary-card">
                                 <strong>💻 Qwen2.5-Coder 7B</strong>
                                 <span>Code Generation & Review Specialist</span>
+                            </div>
+                            <div class="summary-card">
+                                <strong>✨ Qwen3.5 2B</strong>
+                                <span>Dedicated Response Synthesizer</span>
                             </div>
                         </div>
                         <p class="hint">Attach a PDF, DOCX, image, or text file, or type an objective below.</p>
@@ -93,16 +97,24 @@
                     <div class="telemetry-title">Latest Run Metrics</div>
                     <div class="metrics-grid">
                         <div class="metric-item">
-                            <span class="metric-label">Agent Calls:</span>
+                            <span class="metric-label">🧠 Gemma 4B:</span>
                             <span class="metric-val" id="metricAgentCalls">0</span>
                         </div>
                         <div class="metric-item">
-                            <span class="metric-label">Doc Analyzer:</span>
+                            <span class="metric-label">📄 Qwen3-VL:</span>
                             <span class="metric-val" id="metricDocCalls">0</span>
                         </div>
                         <div class="metric-item">
-                            <span class="metric-label">Coder Calls:</span>
+                            <span class="metric-label">💻 Qwen2.5-Coder:</span>
                             <span class="metric-val" id="metricCoderCalls">0</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">✨ Qwen3.5 2B:</span>
+                            <span class="metric-val" id="metricSynthesizerCalls">0</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Qwen3.5 Time:</span>
+                            <span class="metric-val highlight" id="metricSynthTime">0.00s</span>
                         </div>
                         <div class="metric-item">
                             <span class="metric-label">Model Switches:</span>
@@ -123,6 +135,6 @@
         </main>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2.4"></script>
 </body>
 </html>

@@ -38,6 +38,7 @@ from core.mappers.gemma_results import (
     map_coder_result,
     map_error_for_gemma,
     map_exact_result,
+    map_general_knowledge_result,
     map_list_artifacts_result,
     map_math_result,
     map_rag_result,
@@ -432,6 +433,18 @@ class TestGemmaResultMappers:
         mapped = map_math_result(rich_socket)
         assert mapped == {"expression": "(17 * 23) + 4", "value": 395}
 
+    def test_general_knowledge_mapping(self):
+        """map_general_knowledge_result produces compact {answer}."""
+        rich_socket = {
+            "status": "success",
+            "answer": "Photosynthesis is the process by which plants convert sunlight into energy.",
+            "query": "explain photosynthesis",
+        }
+        mapped = map_general_knowledge_result(rich_socket)
+        assert mapped == {
+            "answer": "Photosynthesis is the process by which plants convert sunlight into energy."
+        }
+
 
 # ─── 2. Error and Partial-Result Mapping ───────────────────────────────────────
 
@@ -794,16 +807,17 @@ class TestContractConsistency:
         assert "tools" in data
         tools_map = {t["name"]: t for t in data["tools"]}
 
-        # Canonical tools only
-        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math"}
+        # Canonical tools
+        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math", "general_knowledge"}
         assert set(tools_map.keys()) == expected_tools
 
-        # Check all 7 canonical functions
+        # Check all 8 canonical functions
         expected_functions = {
             "document_database": {"rag_search", "exact_search", "artifact_fetch", "list_artifacts"},
             "vision_ocr": {"analyze_image"},
             "code_specialist": {"solve_code_task"},
             "math": {"calculate"},
+            "general_knowledge": {"answer_query"},
         }
 
         total_fn_count = 0
@@ -818,10 +832,10 @@ class TestContractConsistency:
                 assert isinstance(fn_def["returns"], dict), f"{tool_name}/{fn_name} 'returns' must be an object"
                 assert "properties" in fn_def["returns"], f"{tool_name}/{fn_name} returns missing 'properties'"
 
-        assert total_fn_count == 7
+        assert total_fn_count == 8
 
     def test_abilities_json_matches_canonical_tools(self):
-        """prompts/abilities.json matches the 7 canonical functions in tools.json."""
+        """prompts/abilities.json matches the 8 canonical functions in tools.json."""
         abilities_path = Path("prompts/abilities.json")
         assert abilities_path.exists(), "prompts/abilities.json must exist"
 
@@ -839,12 +853,13 @@ class TestContractConsistency:
             ("vision_ocr", "analyze_image"),
             ("code_specialist", "solve_code_task"),
             ("math", "calculate"),
+            ("general_knowledge", "answer_query"),
         }
         assert delegated_pairs == expected_pairs
 
     def test_canonical_mapper_coverage_all_7_functions(self):
-        """Programmatically assert that all 7 canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS."""
-        expected_7 = {
+        """Programmatically assert that all canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS."""
+        expected_8 = {
             ("document_database", "rag_search"),
             ("document_database", "exact_search"),
             ("document_database", "artifact_fetch"),
@@ -852,8 +867,9 @@ class TestContractConsistency:
             ("vision_ocr", "analyze_image"),
             ("code_specialist", "solve_code_task"),
             ("math", "calculate"),
+            ("general_knowledge", "answer_query"),
         }
-        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_7
+        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_8
         for key, mapper_fn in CANONICAL_GEMMA_MAPPERS.items():
             assert callable(mapper_fn), f"Mapper for {key} must be a callable function"
 

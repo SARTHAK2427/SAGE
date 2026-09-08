@@ -92,6 +92,10 @@ class SageDocumentDB:
             debug=debug,
         )
 
+    def list_doc_ids(self) -> list[str]:
+        """List all ingested document IDs available in the artifact store."""
+        return self._store.list_doc_ids()
+
     # ------------------------------------------------------------------
     # Retrieval
     # ------------------------------------------------------------------

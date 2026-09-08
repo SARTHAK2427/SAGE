@@ -14,33 +14,74 @@ import re
 from typing import Any, Optional
 
 
+def _extract_balanced_json(text: str) -> Optional[str]:
+    """Find and extract a balanced { ... } JSON object, respecting quotes and escapes."""
+    start = -1
+    depth = 0
+    in_str = False
+    escape = False
+
+    # Prefer the brace that starts the "type": "tool_calls" | "final" object if present
+    match = re.search(r'\{\s*"type"\s*:\s*"(?:tool_calls|final)"', text)
+    search_start = match.start() if match else 0
+
+    for i in range(search_start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    return text[start:i + 1].strip()
+    return None
+
+
 def clean_json_string(text: str) -> str:
     """Clean and isolate a JSON string from noisy LLM output.
 
     Steps:
-        1. Strip thought/reasoning tags (<thought>...</thought>)
+        1. Strip thought/reasoning tags (<thought>...</thought>, <think>...</think>)
         2. Extract markdown code fences (```json ... ```)
-        3. Match JSON object containing {"type": ...}
+        3. Extract balanced JSON object matching {"type": ...} without truncating nested dicts
         4. Fall back to outermost matching curly braces
     """
     text = text.strip()
 
     # 1. Strip reasoning / thought tags
     text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     # 2. Extract from markdown code fence anywhere in text
     fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if fence_match:
         candidate = fence_match.group(1).strip()
+        balanced = _extract_balanced_json(candidate)
+        if balanced:
+            return balanced
         if candidate.startswith("{") and candidate.endswith("}"):
             return candidate
 
-    # 3. Extract JSON object containing "type": "tool_calls" | "final"
-    obj_match = re.search(r"(\{\s*\"type\"\s*:\s*\"(?:tool_calls|final)\".*?\})", text, re.DOTALL)
-    if obj_match:
-        return obj_match.group(1).strip()
+    # 3. Extract balanced JSON object (respects strings, escapes, and nested braces)
+    balanced = _extract_balanced_json(text)
+    if balanced:
+        return balanced
 
-    # 4. Fallback to balanced outermost braces
+    # 4. Fallback to outermost braces
     start_idx = text.find("{")
     end_idx = text.rfind("}")
     if start_idx != -1 and end_idx > start_idx:
@@ -73,6 +114,17 @@ def parse_agent_json(raw_text: str) -> Optional[dict[str, Any]]:
             return data
     except Exception:
         pass
+
+    # Recover when trailing closing brace is omitted
+    for candidate in (cleaned, raw_text.strip()):
+        cand = candidate.strip()
+        if cand.startswith("{") and not cand.endswith("}"):
+            try:
+                data = json.loads(cand + "\n}")
+                if isinstance(data, dict) and "type" in data:
+                    return data
+            except Exception:
+                pass
 
     return None
 

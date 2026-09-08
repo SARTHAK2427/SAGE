@@ -473,6 +473,10 @@ textarea {
     border-left-color: var(--accent-yellow);
 }
 
+.trace-event.final_synthesizer {
+    border-left-color: #d946ef;
+}
+
 .trace-event-actor {
     font-weight: bold;
     color: var(--text-main);
@@ -516,4 +520,185 @@ textarea {
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* Raw Turn Details Box */
+.trace-event details.raw-turn {
+    margin-top: 6px;
+    font-size: 11px;
+}
+
+.trace-event details.raw-turn summary {
+    cursor: pointer;
+    color: var(--accent-blue);
+    font-weight: 500;
+    user-select: none;
+}
+
+.trace-event details.raw-turn summary:hover {
+    text-decoration: underline;
+}
+
+.trace-event .raw-box {
+    margin: 4px 0 0 0;
+    padding: 6px 8px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #e6edf3;
+}
+
+.trace-event .raw-box .tag {
+    display: inline-block;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.trace-event .raw-box .tag.input {
+    background: #1f3a5f;
+    color: #58a6ff;
+}
+
+.trace-event .raw-box .tag.output {
+    background: #1e3a29;
+    color: #3fb950;
+}
+
+/* --- Visual Artifacts & Confident Images --- */
+.referenced-images-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border-color);
+}
+
+.artifact-image-card {
+    background: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.artifact-image-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-purple);
+    box-shadow: 0 4px 12px rgba(188, 140, 255, 0.15);
+}
+
+.artifact-image-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.artifact-image-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-purple);
+    font-weight: 600;
+}
+
+.artifact-image-card a,
+.inline-image-card a {
+    display: block;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: #000;
+}
+
+.artifact-image-card img,
+.inline-image-card img {
+    display: block;
+    max-width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    cursor: zoom-in;
+}
+
+.artifact-image-card:hover img,
+.inline-image-card:hover img {
+    transform: scale(1.02);
+}
+
+.artifact-image-caption,
+.inline-image-caption {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.inline-image-card {
+    display: inline-flex;
+    flex-direction: column;
+    margin: 10px 0;
+    max-width: 360px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 8px;
+    background: var(--bg-main);
+}
+
+/* Chat Message Model Telemetry Pills */
+.msg-model-pills {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+.model-pill {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-color);
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+}
+
+.model-pill.gemma {
+    color: var(--accent-blue);
+    border-color: rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.model-pill.doc {
+    color: var(--accent-purple);
+    border-color: rgba(168, 85, 247, 0.35);
+    background: rgba(168, 85, 247, 0.08);
+}
+
+.model-pill.coder {
+    color: var(--accent-yellow);
+    border-color: rgba(234, 179, 8, 0.35);
+    background: rgba(234, 179, 8, 0.08);
+}
+
+.model-pill.qwen35 {
+    color: #e879f9;
+    border-color: rgba(217, 70, 239, 0.4);
+    background: rgba(217, 70, 239, 0.12);
 }

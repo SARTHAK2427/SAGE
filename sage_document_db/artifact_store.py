@@ -23,9 +23,13 @@ Correction 3: ArtifactReader.load_normalized_document() reconstructs
 from __future__ import annotations
 import dataclasses
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Generator
+
+_SAFE_DOC_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_SAFE_ELEMENT_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 from .config import ARTIFACTS_ROOT
 from .models import (
@@ -110,7 +114,12 @@ class ArtifactStore:
         safe_mkdir(self.root)
 
     def doc_dir(self, doc_id: str) -> Path:
-        return self.root / doc_id
+        if not doc_id or not isinstance(doc_id, str) or ".." in doc_id or not _SAFE_DOC_ID_RE.match(doc_id):
+            raise ValueError(f"Invalid or unsafe doc_id: {doc_id!r}")
+        path = (self.root / doc_id).resolve()
+        if not path.is_relative_to(self.root.resolve()):
+            raise ValueError(f"Path traversal detected in doc_id: {doc_id!r}")
+        return path
 
     def document_exists(self, doc_id: str) -> bool:
         """Return True if the artifact directory and manifest exist."""
@@ -123,6 +132,15 @@ class ArtifactStore:
             raise FileNotFoundError(f"Manifest not found for doc_id='{doc_id}'")
         with open(manifest_path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def list_doc_ids(self) -> list[str]:
+        """List all valid document IDs that have an artifact directory and manifest."""
+        if not self.root.exists():
+            return []
+        return sorted([
+            p.name for p in self.root.iterdir()
+            if p.is_dir() and (p / "manifest.json").exists()
+        ])
 
     # ------------------------------------------------------------------
     # Write
@@ -194,7 +212,6 @@ class ArtifactStore:
                     shutil.copy2(doc.source_path, img_path)
                 elif el.image is not None:
                     # Docling-extracted image bytes
-                    img_path.write_bytes(el.image)
                     ext = ".png"
                     img_filename = f"{el.id}.png"
                     img_path = img_dir / img_filename
@@ -377,6 +394,9 @@ class ArtifactStore:
         For code elements: returns metadata + exact code text.
         For table elements: returns the full canonical table dict.
         """
+        if not element_id or not isinstance(element_id, str) or ".." in element_id or not _SAFE_ELEMENT_ID_RE.match(element_id):
+            raise ValueError(f"Invalid or unsafe element_id: {element_id!r}")
+
         manifest = self.load_manifest(doc_id)
         index = manifest.get("element_index", {})
 
@@ -397,7 +417,10 @@ class ArtifactStore:
                 f"Element '{element_id}' has no artifact ref in doc_id='{doc_id}'"
             )
 
-        artifact_path = self.doc_dir(doc_id) / ref
+        doc_directory = self.doc_dir(doc_id)
+        artifact_path = (doc_directory / ref).resolve()
+        if not artifact_path.is_relative_to(doc_directory.resolve()):
+            raise ValueError(f"Path traversal detected in artifact ref: {ref!r}")
 
         if el_type == "table":
             return self._fetch_table_element(doc_id, element_id, artifact_path)
@@ -416,13 +439,28 @@ class ArtifactStore:
             "page": entry.get("page"),
             "ref": ref,
         }
+        doc_directory = self.doc_dir(doc_id)
         if ref:
-            local_path = self.doc_dir(doc_id) / ref
+            local_path = (doc_directory / ref).resolve()
+            if not local_path.is_relative_to(doc_directory.resolve()):
+                raise ValueError(f"Path traversal detected in image ref: {ref!r}")
             result["local_path"] = str(local_path)
             result["exists"] = local_path.exists()
         else:
             result["local_path"] = None
             result["exists"] = False
+
+        derived_cache = (doc_directory / "derived" / "vision" / f"{element_id}.json").resolve()
+        if not derived_cache.is_relative_to(doc_directory.resolve()):
+            raise ValueError(f"Path traversal detected in derived cache path for: {element_id!r}")
+        if derived_cache.exists():
+            result["derived_available"] = True
+            try:
+                with open(derived_cache, "r", encoding="utf-8") as df:
+                    ddata = json.load(df)
+                result["derived_analysis"] = ddata.get("current", {}).get("description")
+            except Exception:
+                pass
         return result
 
     def _fetch_table_element(

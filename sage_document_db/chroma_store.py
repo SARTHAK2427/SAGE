@@ -19,10 +19,13 @@ Correction 3: reindex operations use ArtifactReader to reconstruct
 
 from __future__ import annotations
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import chromadb
+
+logger = logging.getLogger(__name__)
 
 from .config import (
     ARTIFACTS_ROOT,
@@ -109,6 +112,13 @@ def _normalize_results(raw: dict, origin: str) -> list[RagResult]:
     results = []
     for record_id, text, meta, dist in zip(ids, docs, metas, distances):
         meta = meta or {}
+        source_elem_ids = decode_list_field(meta.get("source_element_ids_json"))
+        img_refs = decode_list_field(meta.get("image_refs_json"))
+        if not source_elem_ids and meta.get("image_id"):
+            source_elem_ids = [meta["image_id"]]
+        if not img_refs and meta.get("image_id"):
+            img_refs = [meta["image_id"]]
+
         results.append(RagResult(
             record_id=record_id,
             origin=origin,
@@ -117,8 +127,8 @@ def _normalize_results(raw: dict, origin: str) -> list[RagResult]:
             distance=float(dist),
             doc_id=meta.get("doc_id", ""),
             page=meta.get("page"),
-            source_element_ids=decode_list_field(meta.get("source_element_ids_json")),
-            image_refs=decode_list_field(meta.get("image_refs_json")),
+            source_element_ids=source_elem_ids,
+            image_refs=img_refs,
             table_refs=decode_list_field(meta.get("table_refs_json")),
             code_refs=decode_list_field(meta.get("code_refs_json")),
             derived_cache_ref=meta.get("derived_cache_ref"),
@@ -237,15 +247,17 @@ class ChromaStore:
             if ids:
                 self._source.delete(ids=ids)
         except Exception as e:
-            print(f"[WARNING] Could not delete existing source records for {doc_id}: {e}")
+            logger.error("Could not delete existing source records for %s: %s", doc_id, e)
+            raise RuntimeError(f"Failed to delete existing Chroma records for doc_id='{doc_id}': {e}") from e
 
     def delete_derived_records(self, doc_id: str, image_id: str) -> None:
         """Delete a specific derived image record."""
         record_id = f"{doc_id}:derived:image:{image_id}"
         try:
             self._derived.delete(ids=[record_id])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to delete derived Chroma record %s: %s", record_id, e)
+            raise RuntimeError(f"Failed to delete derived Chroma record '{record_id}': {e}") from e
 
     # ------------------------------------------------------------------
     # Querying (Correction 2)

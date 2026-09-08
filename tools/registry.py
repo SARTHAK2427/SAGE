@@ -18,6 +18,7 @@ from tools.document_database import register_document_db_tools
 from tools.vision import register_vision_tools
 from tools.coder import register_coder_tools
 from tools.math_tool import register_math_tools
+from tools.general_knowledge import register_general_knowledge_tools
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,13 @@ def create_default_registry(
 
     # 4. Safe Math tool
     register_math_tools(registry)
+
+    # 5. General Knowledge Specialist (Qwen3.5 2B)
+    register_general_knowledge_tools(
+        registry,
+        model_manager=model_manager,
+        model_client=model_client,
+    )
 
     logger.info("Initialized ToolRegistry with tools: %s", registry.available_tools)
     return registry

@@ -195,6 +195,7 @@ def _run_qwen_vision(
         messages=messages,
         temperature=0.05,
         max_tokens=2048,
+        model_key="document_analyzer",
     )
 
     return res["content"]
@@ -231,6 +232,19 @@ def tool_vision_analyze_image(
             "status": "error",
             "error": "image_id is required for vision_ocr / analyze_image",
         }
+
+    if not doc_id and image_id:
+        try:
+            docs = db.list_doc_ids() if hasattr(db, "list_doc_ids") else [p.name for p in db._store.root.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
+            for d in docs:
+                m = db._store.load_manifest(d)
+                if image_id in m.get("element_index", {}):
+                    doc_id = d
+                    break
+            if not doc_id and docs:
+                doc_id = docs[-1]
+        except Exception:
+            pass
 
     result = tool_vision_analyze(
         db,

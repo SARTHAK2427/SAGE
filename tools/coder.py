@@ -158,6 +158,8 @@ def tool_code_solve_task(
             )
 
         pipe_result = pipeline.execute(task=instruction, llm_response=raw_llm_response)
+        if model_manager and hasattr(model_manager, "rearm_agent_background"):
+            model_manager.rearm_agent_background()
         extracted_lang = getattr(pipe_result, "extraction_language", None) or effective_lang
 
         return {
@@ -238,6 +240,39 @@ def tool_code_execute(
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+def _query_coder_llm(
+    instruction: str,
+    code: Optional[str],
+    language: Optional[str],
+    model_manager,
+    model_client,
+) -> str:
+    """Invoke the coder specialist model with system prompt and structured input."""
+    import config
+    from core.mappers.coder_input import build_coder_input
+
+    coder_prompt = ""
+    prompt_file = getattr(config, "PROMPTS_DIR", None)
+    if prompt_file and (prompt_file / "coder_system.txt").exists():
+        with open(prompt_file / "coder_system.txt", "r", encoding="utf-8") as f:
+            coder_prompt = f.read().strip()
+
+    messages = []
+    if coder_prompt:
+        messages.append({"role": "system", "content": coder_prompt})
+    messages.append({"role": "user", "content": build_coder_input(instruction, code, language)})
+
+    model_manager.ensure_model("coder")
+    coder_cfg = config.MODELS.get("coder", {})
+    res = model_client.chat_completion(
+        messages=messages,
+        temperature=coder_cfg.get("temperature", 0.05),
+        max_tokens=coder_cfg.get("max_tokens", 4096),
+        model_key="coder",
+    )
+    return res.get("content", "") or ""
+
+
 def _generate_code_via_model(
     instruction: str,
     code: Optional[str],
@@ -246,28 +281,10 @@ def _generate_code_via_model(
     model_client,
 ) -> str:
     """Call Qwen-Coder to generate code (without sandbox execution)."""
-    from core.mappers.coder_input import build_coder_input
     if model_manager is None or model_client is None:
         return code or f"# Code generation not available\n# Task: {instruction}"
     try:
-        import config
-        coder_prompt = ""
-        prompt_file = getattr(config, "PROMPTS_DIR", None)
-        if prompt_file and (prompt_file / "coder_system.txt").exists():
-            with open(prompt_file / "coder_system.txt", "r", encoding="utf-8") as f:
-                coder_prompt = f.read().strip()
-        messages = []
-        if coder_prompt:
-            messages.append({"role": "system", "content": coder_prompt})
-        messages.append({"role": "user", "content": build_coder_input(instruction, code, language)})
-        model_manager.ensure_model("coder")
-        coder_cfg = config.MODELS.get("coder", {})
-        res = model_client.chat_completion(
-            messages=messages,
-            temperature=coder_cfg.get("temperature", 0.05),
-            max_tokens=coder_cfg.get("max_tokens", 4096),
-        )
-        return res.get("content", "") or ""
+        return _query_coder_llm(instruction, code, language, model_manager, model_client)
     except Exception as exc:
         logger.warning("Code generation via model failed: %s", exc)
         return code or ""
@@ -281,29 +298,11 @@ def _get_llm_code_response(
     model_client,
 ) -> str:
     """Get raw LLM response (code in fenced block) for sandbox execution."""
-    from core.mappers.coder_input import build_coder_input
     effective_lang = language.strip().lower() if language and language.strip() else "python"
     if model_manager is None or model_client is None:
         return f"```{effective_lang}\n{code or ''}\n```"
     try:
-        import config
-        coder_prompt = ""
-        prompt_file = getattr(config, "PROMPTS_DIR", None)
-        if prompt_file and (prompt_file / "coder_system.txt").exists():
-            with open(prompt_file / "coder_system.txt", "r", encoding="utf-8") as f:
-                coder_prompt = f.read().strip()
-        messages = []
-        if coder_prompt:
-            messages.append({"role": "system", "content": coder_prompt})
-        messages.append({"role": "user", "content": build_coder_input(instruction, code, language)})
-        model_manager.ensure_model("coder")
-        coder_cfg = config.MODELS.get("coder", {})
-        res = model_client.chat_completion(
-            messages=messages,
-            temperature=coder_cfg.get("temperature", 0.05),
-            max_tokens=coder_cfg.get("max_tokens", 4096),
-        )
-        return res.get("content", "") or ""
+        return _query_coder_llm(instruction, code, language, model_manager, model_client)
     except Exception as exc:
         logger.exception("LLM code generation failed: %s", exc)
         return f"```{effective_lang}\n{code or ''}\n```"

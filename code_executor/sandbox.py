@@ -292,20 +292,29 @@ class DockerSandbox:
 
 # ─── Module-level helpers ─────────────────────────────────────────────────────
 
-def _extract_memory_mb(container) -> float:
+def _extract_memory_mb(container, timeout: float = 2.0) -> float:
     """
-    Best-effort peak memory in MB.
+    Best-effort peak memory in MB with bounded timeout to prevent hangs.
 
     cgroup v1: memory_stats.max_usage  (explicit high-water mark)
     cgroup v2: memory_stats.usage      (snapshot at exit — approximation)
     """
-    try:
-        stats = container.stats(stream=False)
-        mem = stats.get("memory_stats", {})
-        peak_bytes = mem.get("max_usage") or mem.get("usage", 0)
-        return round(peak_bytes / (1024 * 1024), 2)
-    except Exception:  # noqa: BLE001
-        return 0.0
+    holder = [0.0]
+
+    def _fetch() -> None:
+        try:
+            stats = container.stats(stream=False)
+            if isinstance(stats, dict):
+                mem = stats.get("memory_stats", {})
+                peak_bytes = mem.get("max_usage") or mem.get("usage", 0)
+                holder[0] = round(peak_bytes / (1024 * 1024), 2)
+        except Exception:  # noqa: BLE001
+            pass
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    return holder[0]
 
 
 def _collect_logs(container) -> Tuple[str, str]:

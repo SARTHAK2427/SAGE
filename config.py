@@ -8,6 +8,7 @@ TEMP_DIR = BASE_DIR / "temp"
 PROMPTS_DIR = BASE_DIR / "prompts"
 STATIC_DIR = BASE_DIR / "static"
 ARTIFACTS_ROOT = Path(os.environ.get("SAGE_ARTIFACTS_ROOT", str(BASE_DIR / "artifacts")))
+MODEL_RUNTIME_ROOT = ARTIFACTS_ROOT / "model_runtime"
 CHROMA_ROOT = Path(os.environ.get("SAGE_CHROMA_ROOT", str(BASE_DIR / "chroma_db")))
 
 # Optional .env loading (lightweight, stdlib-only, does not override active environment)
@@ -33,7 +34,19 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 ARTIFACTS_ROOT.mkdir(parents=True, exist_ok=True)
+MODEL_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
 CHROMA_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Upload and Security Boundaries
+MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("SAGE_MAX_UPLOAD_SIZE_BYTES", str(50 * 1024 * 1024)))  # 50 MB
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "SAGE_CORS_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
 
 
 # ── Portable Executable & Model Discovery ─────────────────────────────────────
@@ -151,5 +164,29 @@ MODELS = {
         "temperature": 0.05,
         "max_tokens": 2048,
         "reasoning": "off",
-    }
+    },
+    "final_synthesizer": {
+        "key": "final_synthesizer",
+        "name": "Qwen3.5 2B Final Synthesizer",
+        "model_path": os.path.join(MODEL_DIR, "qwen3.5-2b-instruct-q4_k_m.gguf"),
+        "mmproj": None,
+        "context": 8192,
+        "ngl": 999,
+        "temperature": 0.20,
+        "max_tokens": 2048,
+        "reasoning": "off",
+    },
 }
+
+# ── Remote GPU Model Transport Configuration ───────────────────────────────────
+SAGE_MODEL_BACKEND = os.environ.get("SAGE_MODEL_BACKEND", "local").lower().strip()
+SAGE_REMOTE_GPU_URL = os.environ.get("SAGE_REMOTE_GPU_URL", "").rstrip("/")
+SAGE_REMOTE_GPU_API_KEY = os.environ.get("SAGE_REMOTE_GPU_API_KEY", "")
+REMOTE_CONNECT_TIMEOUT = float(os.environ.get("SAGE_REMOTE_CONNECT_TIMEOUT", "10.0"))
+REMOTE_REQUEST_TIMEOUT = float(os.environ.get("SAGE_REMOTE_REQUEST_TIMEOUT", "180.0"))
+
+
+def is_remote_backend() -> bool:
+    """Return True if SAGE is configured to offload inference to the remote GPU worker."""
+    return SAGE_MODEL_BACKEND == "remote"
+
