@@ -1059,6 +1059,40 @@ class Orchestrator:
 
                 accumulated_tool_evidence.extend(tool_results_list)
 
+                # ── Fast-path: Standalone general_knowledge completion ────────
+                # If this was a general knowledge query (conversational, factual, chat)
+                # and no other tools were requested, Qwen3.5 2B has ALREADY produced
+                # the complete, authoritative answer.
+                # Returning it directly avoids two redundant model switches and prevents
+                # Gemma 4B from needlessly re-generating or summarizing the reply!
+                if (
+                    len(calls) == 1
+                    and calls[0].get("tool") in ("general_knowledge", "knowledge_specialist", "general_chat")
+                    and tool_results_list
+                    and tool_results_list[0].get("status") == "success"
+                ):
+                    qwen_answer = tool_results_list[0].get("result", {}).get("answer", "")
+                    if qwen_answer:
+                        final_answer = qwen_answer
+                        telemetry["final_response_length"] = len(final_answer)
+                        wall_end = time.time()
+                        telemetry["total_wall_time"] = wall_end - wall_start
+                        trace.append({
+                            "actor": "final_synthesizer",
+                            "action": "final_synthesis",
+                            "loop": loop_count,
+                            "answer_preview": final_answer[:200],
+                        })
+                        _emit({
+                            "event": "final_synthesis",
+                            "actor": "final_synthesizer",
+                            "loop": loop_count,
+                            "answer": final_answer,
+                            "timestamp": time.time(),
+                        })
+                        model_manager.rearm_agent_background()
+                        break
+
                 # Re-arm Gemma 4B in the background while building and printing the tool packet
                 model_manager.rearm_agent_background()
 
