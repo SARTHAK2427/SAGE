@@ -90,6 +90,48 @@ def clean_json_string(text: str) -> str:
     return text
 
 
+def _auto_close_brackets(cand: str) -> Optional[dict[str, Any]]:
+    """Automatically balance unclosed strings, square brackets, and curly braces."""
+    stack = []
+    in_string = False
+    escape = False
+    for ch in cand:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ('{', '['):
+            stack.append(ch)
+        elif ch == '}':
+            if stack and stack[-1] == '{':
+                stack.pop()
+        elif ch == ']':
+            if stack and stack[-1] == '[':
+                stack.pop()
+
+    closing = ""
+    if in_string:
+        closing += '"'
+    while stack:
+        b = stack.pop()
+        closing += "}" if b == "{" else "]"
+
+    try:
+        data = json.loads(cand + closing)
+        if isinstance(data, dict) and "type" in data:
+            return data
+    except Exception:
+        pass
+    return None
+
+
 def parse_agent_json(raw_text: str) -> Optional[dict[str, Any]]:
     """Parse raw agent output into a dictionary.
 
@@ -115,16 +157,25 @@ def parse_agent_json(raw_text: str) -> Optional[dict[str, Any]]:
     except Exception:
         pass
 
-    # Recover when trailing closing brace is omitted
+    # Recover when trailing closing brace(s), quote(s), or bracket(s) are omitted
     for candidate in (cleaned, raw_text.strip()):
         cand = candidate.strip()
-        if cand.startswith("{") and not cand.endswith("}"):
+        if not cand.startswith("{"):
+            continue
+
+        # Fast single trailing brace check
+        if not cand.endswith("}"):
             try:
                 data = json.loads(cand + "\n}")
                 if isinstance(data, dict) and "type" in data:
                     return data
             except Exception:
                 pass
+
+        # Intelligent stack-based bracket auto-closure
+        repaired = _auto_close_brackets(cand)
+        if repaired is not None:
+            return repaired
 
     return None
 
