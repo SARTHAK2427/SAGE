@@ -202,14 +202,24 @@ def parse_agent_json_socket(raw_text: str) -> dict:
         )
 
 
-def build_repair_prompt() -> str:
+def build_repair_prompt(is_initial_turn: bool = False) -> str:
     """Standardized 1-turn repair prompt when Gemma produces invalid JSON."""
+    if is_initial_turn:
+        return (
+            "Your previous response was not valid JSON or attempted to answer directly.\n"
+            "You are strictly the orchestrator and are FORBIDDEN from answering directly or writing code.\n"
+            "Output ONLY a valid JSON tool call:\n"
+            '{"type": "tool_calls", "calls": [{"tool": "...", "function": "...", "arguments": {...}}]}\n'
+            "Delegate code to code_specialist, and general knowledge/questions to general_knowledge.\n"
+            "No prose outside JSON."
+        )
     return (
         "Your previous response was not valid JSON matching the required schema.\n"
         "Output ONLY a single valid JSON object:\n"
         "Either:\n"
-        "{\"type\": \"tool_calls\", \"calls\": [...]}\n"
-        "or:\n"
-        "{\"type\": \"final\", \"answer\": \"...\"}\n"
+        '{"type": "tool_calls", "calls": [...]}\n'
+        "or (only after tool results are present):\n"
+        '{"type": "final", "answer": "..."}\n'
         "No prose outside JSON."
     )
+

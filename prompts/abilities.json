@@ -6,7 +6,7 @@
     "interpret tool results",
     "synthesize and compare evidence",
     "decide when enough evidence exists",
-    "produce the final answer"
+    "produce the controller finalization brief after tool results arrive"
   ],
   "delegated": [
     {
@@ -49,7 +49,7 @@
       "capability": "code generation, debugging, refactoring, or translation",
       "tool": "code_specialist",
       "function": "solve_code_task",
-      "when": "Substantial coding work is required that benefits from a dedicated coding model."
+      "when": "Any coding, script generation, software engineering, debugging, code modification, or programming task."
     },
     {
       "capability": "general knowledge, factual, conceptual, and educational question answering",
@@ -63,6 +63,10 @@
     "arbitrary document ingestion",
     "large_document_analysis specialist",
     "embedding or Chroma tools",
+    "direct code writing or programming",
+    "direct answering of general or factual questions",
+    "direct arithmetic calculation",
+    "direct final answer on turn 1 without tool execution",
     "any tool not listed in tools.json"
   ]
 }

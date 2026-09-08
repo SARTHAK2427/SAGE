@@ -164,7 +164,7 @@
     },
     {
       "name": "code_specialist",
-      "description": "Delegate substantial code generation, debugging, transformation, or refactoring to a coding specialist model.",
+      "description": "Delegate all code generation, programming, script writing, algorithms, debugging, transformation, or refactoring to the coding specialist model (Qwen2.5-Coder). Gemma must never write or generate code directly itself.",
       "functions": [
         {
           "name": "solve_code_task",

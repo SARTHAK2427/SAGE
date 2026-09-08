@@ -750,7 +750,7 @@ class Orchestrator:
             # Defensive 1-turn repair if JSON is invalid
             if parsed is None:
                 console.print("[bold red][WARN] Gemma output was not valid JSON. Attempting 1 repair turn...[/bold red]")
-                repair_prompt = build_repair_prompt()
+                repair_prompt = build_repair_prompt(is_initial_turn=(loop_count == 1))
                 history.append({"role": "assistant", "content": raw_output})
                 history.append({"role": "user", "content": repair_prompt})
 
@@ -772,6 +772,41 @@ class Orchestrator:
 
             # Process Response
             res_type = parsed.get("type")
+
+            # ── Guardrail: Enforce tool delegation on Turn 1 ──────────────────
+            # If Gemma attempts to return a direct final answer on Turn 1 without running tools,
+            # reprimand it and enforce tool delegation to the appropriate specialist.
+            if res_type == "final" and loop_count == 1 and not accumulated_tool_evidence:
+                console.print("[bold red][WARN] Gemma attempted direct final answer on Turn 1. Enforcing tool delegation...[/bold red]")
+                delegation_prompt = (
+                    "VIOLATION: You are strictly the orchestrator and are FORBIDDEN from answering directly or writing code yourself.\n"
+                    "On Turn 1, you MUST delegate to an appropriate tool:\n"
+                    "- For coding, scripts, or programming: call code_specialist -> solve_code_task\n"
+                    "- For general knowledge, facts, concepts, definitions, or chat: call general_knowledge -> answer_query\n"
+                    "- For arithmetic calculations: call math -> calculate\n"
+                    "- For uploaded documents: call document_database\n"
+                    "- For images / OCR: call vision_ocr\n"
+                    "Output ONLY a valid JSON tool call: {\"type\": \"tool_calls\", \"calls\": [...]}"
+                )
+                history.append({"role": "assistant", "content": raw_output})
+                history.append({"role": "user", "content": delegation_prompt})
+
+                retry_res = model_client.chat_completion(
+                    messages=history,
+                    temperature=0.10,
+                    max_tokens=agent_cfg.get("max_tokens", 2048),
+                    model_key="agent",
+                )
+                retry_output = retry_res["content"]
+                parsed_retry = self._parse_gemma_json(retry_output)
+
+                history.pop()
+                history.pop()
+
+                if parsed_retry and parsed_retry.get("type") == "tool_calls":
+                    parsed = parsed_retry
+                    res_type = "tool_calls"
+                    raw_output = retry_output
 
             if res_type == "final":
                 gemma_brief = parsed.get("answer", "")
