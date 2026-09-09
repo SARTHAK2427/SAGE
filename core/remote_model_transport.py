@@ -248,6 +248,9 @@ class RemoteModelTransport:
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if getattr(config, "GEMMA_CONTEXT", None):
+            payload["context"] = config.GEMMA_CONTEXT
+            payload["n_ctx"] = config.GEMMA_CONTEXT
 
         t0 = time.time()
         data = self._post("/infer/gemma", payload)

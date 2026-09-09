@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAGE — Split-View Chat &amp; Memory Vault</title>
+  <style>
+    /* ── DESIGN SYSTEM & TOKENS ─────────────────────────────────────── */
+    :root {
+      --bg-neutral: #f8fafc;
+      --surface: #ffffff;
+      --text-primary: #0f172a;
+      --text-muted: #64748b;
+      --text-subtle: #94a3b8;
+      --border: #e2e8f0;
+      --border-focus: #cbd5e1;
+      
+      --accent: #25a1c2;
+      --accent-hover: #186c82;
+      --accent-muted: rgba(32, 133, 160, 0.08);
+      --accent-border: rgba(32, 133, 160, 0.28);
+      
+      --hot-color: #f97316;
+      --hot-bg: #fff7ed;
+      --hot-border: #ffedd5;
+      
+      --cold-color: #3b82f6;
+      --cold-bg: #eff6ff;
+      --cold-border: #dbeafe;
+      
+      --user-bubble-bg: #e0e7ff;
+      --user-bubble-tx: #1e1b4b;
+      
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      font-family: var(--font-family);
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text-primary);
+      background-color: var(--bg-neutral);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea, select {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: none;
+      outline: none;
+    }
+
+    /* ── LAYOUT SHELL (65% / 35% Split) ────────────────────────────── */
+    .sage-split-shell {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── LEFT ZONE: CHAT INTERFACE (65%) ────────────────────────────── */
+    .chat-zone {
+      width: 65%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-neutral);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Chat Header */
+    .chat-header {
+      height: 60px;
+      min-height: 60px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 10;
+    }
+
+    .chat-header-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background-color: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+    }
+
+    .chat-header-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .session-badge {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: var(--bg-neutral);
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+
+    /* Conversation Stream */
+    .chat-stream {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      scroll-behavior: smooth;
+    }
+
+    .chat-stream::-webkit-scrollbar {
+      width: 6px;
+    }
+    .chat-stream::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 999px;
+    }
+
+    .message-row {
+      display: flex;
+      width: 100%;
+    }
+
+    .message-row.user {
+      justify-content: flex-end;
+    }
+
+    .message-row.assistant {
+      justify-content: flex-start;
+    }
+
+    .message-bubble {
+      max-width: 78%;
+      padding: 14px 18px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .message-row.user .message-bubble {
+      background: var(--user-bubble-bg);
+      color: var(--user-bubble-tx);
+      border-bottom-right-radius: 4px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .message-row.assistant .message-bubble {
+      background: var(--surface);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .assistant-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .assistant-avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #cae9e3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+    }
+
+    /* Ambient Memory Pill / Badge */
+    .ambient-memory-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 6px 14px;
+      background: var(--accent-muted);
+      border: 1px solid var(--accent-border);
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 2px rgba(255, 107, 107, 0.08);
+    }
+
+    .ambient-memory-pill:hover {
+      background: #ffe3e3;
+      transform: translateY(-1px);
+      box-shadow: 0 3px 6px rgba(255, 107, 107, 0.15);
+    }
+
+    .ambient-memory-pill .pill-action {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: underline;
+      margin-left: 2px;
+    }
+
+    /* Input Dock */
+    .chat-dock {
+      padding: 16px 24px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .input-bar-container {
+      display: flex;
+      align-items: center;
+      background: var(--bg-neutral);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px 12px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-bar-container:focus-within {
+      border-color: var(--accent);
+      background: #ffffff;
+      box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.12);
+    }
+
+    .chat-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      outline: none;
+      font-size: 14px;
+      color: var(--text-primary);
+      padding: 8px 6px;
+    }
+
+    .chat-input::placeholder {
+      color: var(--text-subtle);
+    }
+
+    .dock-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dock-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .dock-btn:hover {
+      background: var(--border);
+      color: var(--text-primary);
+    }
+
+    .send-action-btn {
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 600;
+      padding: 7px 15px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .send-action-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .send-action-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* ── RIGHT ZONE: MEMORY VAULT SIDEBAR (35%) ──────────────────────── */
+    .vault-zone {
+      width: 35%;
+      height: 100%;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
+      overflow: hidden;
+    }
+
+    /* Vault Header */
+    .vault-header {
+      padding: 16px 20px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .vault-title {
+      font-size: 16.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .vault-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .vault-add-btn {
+      background: var(--accent-muted);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+      padding: 4px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .vault-add-btn:hover {
+      background: #ffe3e3;
+    }
+
+    .vault-close-btn {
+      color: var(--text-muted);
+      font-size: 16px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .vault-close-btn:hover {
+      background: var(--bg-neutral);
+      color: var(--text-primary);
+    }
+
+    /* Segmented Tab Control */
+    .vault-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: relative;
+    }
+
+    .vault-tab-btn {
+      flex: 1;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text-muted);
+      border-bottom: 2.5px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .vault-tab-btn.active {
+      color: var(--text-primary);
+      font-weight: 700;
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1px 7px;
+      font-size: 11.5px;
+      font-weight: 700;
+      border-radius: 999px;
+      transition: all 0.2s;
+    }
+
+    .vault-tab-btn.active .tab-badge.hot-badge {
+      background: var(--accent-muted);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+    }
+
+    .vault-tab-btn.active .tab-badge.cold-badge {
+      background: var(--cold-bg);
+      color: var(--cold-color);
+      border: 1px solid var(--cold-border);
+    }
+
+    .vault-tab-btn:not(.active) .tab-badge {
+      background: #f1f5f9;
+      color: var(--text-muted);
+    }
+
+    /* Filters Section */
+    .vault-filters {
+      padding: 14px 18px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--surface);
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .search-box-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      color: var(--text-subtle);
+      pointer-events: none;
+    }
+
+    .vault-search-input {
+      width: 100%;
+      height: 38px;
+      padding: 0 12px 0 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #ffffff;
+      font-size: 13px;
+      color: var(--text-primary);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .vault-search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.15);
+      outline: none;
+    }
+
+    .vault-search-input::placeholder {
+      color: var(--text-subtle);
+    }
+
+    /* Horizontal Category Chip Bar */
+    .category-chips-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      padding-bottom: 2px;
+    }
+
+    .category-chips-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .category-chip {
+      white-space: nowrap;
+      padding: 4px 13px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .category-chip:hover {
+      background: #e2e8f0;
+      color: var(--text-primary);
+    }
+
+    .category-chip.active {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Scrollable Memory Cards Stack */
+    .vault-cards-stack {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--surface);
+    }
+
+    .vault-cards-stack::-webkit-scrollbar {
+      width: 5px;
+    }
+    .vault-cards-stack::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 999px;
+    }
+
+    /* Memory Card Item */
+    .memory-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+      position: relative;
+    }
+
+    .memory-card:hover {
+      border-color: var(--border-focus);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Highlight pulse animation for [View ↗] click */
+    @keyframes flashAccentRing {
+      0% {
+        box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.6), 0 4px 12px rgba(255, 107, 107, 0.2);
+        border-color: var(--accent);
+      }
+      50% {
+        box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.4), 0 4px 12px rgba(255, 107, 107, 0.15);
+        border-color: var(--accent);
+      }
+      100% {
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        border-color: var(--border);
+      }
+    }
+
+    .memory-card.highlight-flash {
+      animation: flashAccentRing 1.5s ease-out forwards;
+    }
+
+    .card-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .card-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .category-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    /* Distinct category palette */
+    .badge-task { background: #e0f2fe; color: #0284c7; }
+    .badge-decision { background: rgba(37, 161, 194, 0.1); color: #25a1c2; border: 1px solid rgba(37, 161, 194, 0.28); }
+    .badge-preference { background: #ede9fe; color: #7c3aed; }
+    .badge-personal { background: #d1fae5; color: #059669; }
+    .badge-project { background: #e0e7ff; color: #4f46e5; }
+    .badge-technical { background: #ffe4e6; color: #e11d48; }
+    .badge-summary { background: #f1f5f9; color: #475569; }
+
+    .card-timestamp {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .card-id-chip {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-subtle);
+    }
+
+    .card-body-text {
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: #1e293b;
+      margin-bottom: 12px;
+      word-break: break-word;
+    }
+
+    .card-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-btn {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: #334155;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+
+    .card-btn:hover {
+      background: #f8fafc;
+      border-color: var(--border-focus);
+    }
+
+    .card-btn.btn-delete:hover {
+      background: #fff1f2;
+      border-color: #fecdd3;
+      color: #e11d48;
+    }
+
+    .card-btn.btn-promote {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+
+    .card-btn.btn-promote:hover {
+      background: #dbeafe;
+      border-color: #93c5fd;
+    }
+
+    /* In-Place Editing UI */
+    .edit-mode-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .edit-textarea {
+      width: 100%;
+      min-height: 76px;
+      background: #fffdf5;
+      border: 1.5px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13.5px;
+      line-height: 1.45;
+      color: var(--text-primary);
+      box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.12);
+      outline: none;
+      resize: vertical;
+    }
+
+    .edit-actions-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .edit-cancel-btn {
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .edit-cancel-btn:hover {
+      background: #e2e8f0;
+      color: var(--text-primary);
+    }
+
+    .edit-save-btn {
+      padding: 5px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffffff;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      transition: background 0.15s;
+    }
+
+    .edit-save-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    /* New Memory Modal / Inline Creator */
+    .new-mem-panel {
+      background: #f8fafc;
+      border: 1px solid var(--accent-border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .new-mem-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .new-mem-select {
+      flex: 1;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      font-size: 12px;
+      outline: none;
+    }
+
+    /* Empty state */
+    .empty-stack-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+
+    .empty-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .empty-subtitle {
+      font-size: 12.5px;
+      max-width: 240px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="sage-split-shell">
+
+  <!-- ══════════════ LEFT ZONE: MAIN CHAT INTERFACE (65%) ══════════════ -->
+  <main class="chat-zone">
+    <!-- Header -->
+    <header class="chat-header">
+      <div class="chat-header-title">
+        <span class="status-dot"></span>
+        <span>SAGE Session</span>
+      </div>
+      <div class="chat-header-meta">
+        <span class="session-badge">Local Air-Gapped · Dual Tier Memory</span>
+      </div>
+    </header>
+
+    <!-- Conversation Stream -->
+    <div class="chat-stream" id="chatStream">
+      <!-- Welcome Message from SAGE -->
+      <div class="message-row assistant">
+        <div class="message-bubble">
+          <div class="assistant-meta">
+            <span class="assistant-avatar">S</span>
+            <span>SAGE Assistant</span>
+          </div>
+          <div>
+            Hello Ojasvi! SAGE is running locally with dual-tier hot/cold canonical memory tracking.
+          </div>
+        </div>
+      </div>
+
+      <!-- User Turn -->
+      <div class="message-row user">
+        <div class="message-bubble">
+          Can we build the backend with FastAPI? I want to make sure the memory store has full CRUD support for Phase 2.
+        </div>
+      </div>
+
+      <!-- Assistant Turn with Ambient Memory Badge -->
+      <div class="message-row assistant">
+        <div class="message-bubble">
+          <div class="assistant-meta">
+            <span class="assistant-avatar">S</span>
+            <span>SAGE Assistant</span>
+          </div>
+          <div>
+            Absolutely. FastAPI is set as your default framework. I've noted your preference in persistent cold memory, and initialized the Phase 2 CRUD task in your session memory.
+          </div>
+          
+          <!-- Ambient Memory Pill #1: Targets mem_c1 -->
+          <div>
+            <div class="ambient-memory-pill" onclick="jumpToMemory('mem_c1', 'cold')" title="Inspect in Memory Vault">
+              <span>Cold Memory Stored · preference · "Prefers FastAPI"</span>
+              <span class="pill-action">[View ↗]</span>
+            </div>
+          </div>
+
+          <!-- Ambient Memory Pill #2: Targets mem_h1 -->
+          <div>
+            <div class="ambient-memory-pill" onclick="jumpToMemory('mem_h1', 'hot')" title="Inspect in Memory Vault">
+              <span>Hot Memory Stored · task · "Phase 2 CRUD"</span>
+              <span class="pill-action">[View ↗]</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Message Input Dock -->
+    <footer class="chat-dock">
+      <div class="input-bar-container">
+        <input type="text" class="chat-input" id="chatInput" placeholder="Type a message or instruction..." autocomplete="off">
+        <div class="dock-actions">
+          <button class="dock-btn" title="Attach document" id="btnAttach">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <button class="dock-btn" title="Audio input">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          <button class="send-action-btn" id="btnSend">
+            <span>Send</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <!-- ══════════════ RIGHT ZONE: SAGE MEMORY VAULT SIDEBAR (35%) ══════════════ -->
+  <aside class="vault-zone" id="vaultZone">
+    <!-- Header -->
+    <header class="vault-header">
+      <div class="vault-title">
+        <span>SAGE Memory Vault</span>
+      </div>
+      <div class="vault-header-actions">
+        <button class="vault-add-btn" id="btnAddMemory" title="Create new memory entry">+ Add</button>
+        <button class="vault-close-btn" id="btnCloseVault" title="Close Vault">&times;</button>
+      </div>
+    </header>
+
+    <!-- Segmented Tab Control -->
+    <nav class="vault-tabs">
+      <button class="vault-tab-btn active" id="tabHot" data-type="hot">
+        <span>Hot Memory (Session)</span>
+        <span class="tab-badge hot-badge" id="hotCount">2</span>
+      </button>
+      <button class="vault-tab-btn" id="tabCold" data-type="cold">
+        <span>Cold Memory (Persistent)</span>
+        <span class="tab-badge cold-badge" id="coldCount">2</span>
+      </button>
+    </nav>
+
+    <!-- Filter & Query Controls -->
+    <div class="vault-filters">
+      <!-- Search Input -->
+      <div class="search-box-wrapper">
+        <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="vault-search-input" id="vaultSearch" placeholder="Filter by content, category, or ID..." autocomplete="off">
+      </div>
+
+      <!-- Horizontal Category Chip Bar -->
+      <div class="category-chips-bar" id="categoryChips">
+        <button class="category-chip active" data-cat="all">All</button>
+        <button class="category-chip" data-cat="personal">Personal</button>
+        <button class="category-chip" data-cat="preference">Preference</button>
+        <button class="category-chip" data-cat="project">Project</button>
+        <button class="category-chip" data-cat="decision">Decision</button>
+        <button class="category-chip" data-cat="task">Task</button>
+        <button class="category-chip" data-cat="technical">Technical</button>
+        <button class="category-chip" data-cat="summary">Summary</button>
+      </div>
+    </div>
+
+    <!-- Inline Quick Add Memory Card (Hidden by default) -->
+    <div id="newMemoryPanel" style="display:none; padding: 12px 18px 0;">
+      <div class="new-mem-panel">
+        <div class="new-mem-row">
+          <select id="newMemType" class="new-mem-select">
+            <option value="hot">Hot (Session)</option>
+            <option value="cold">Cold (Persistent)</option>
+          </select>
+          <select id="newMemCategory" class="new-mem-select">
+            <option value="task">Task</option>
+            <option value="decision">Decision</option>
+            <option value="preference">Preference</option>
+            <option value="personal">Personal</option>
+            <option value="project">Project</option>
+            <option value="technical">Technical</option>
+            <option value="summary">Summary</option>
+          </select>
+        </div>
+        <textarea id="newMemContent" class="edit-textarea" style="min-height: 60px;" placeholder="Enter memory knowledge statement..."></textarea>
+        <div class="edit-actions-row">
+          <button class="edit-cancel-btn" id="btnCancelAdd">Cancel</button>
+          <button class="edit-save-btn" id="btnSaveAdd">Save to Vault</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scrollable Memory Cards Stack -->
+    <div class="vault-cards-stack" id="cardsStack"></div>
+  </aside>
+
+</div>
+
+<!-- ══════════════ INTERACTIVE STATE MACHINE & LOGIC ══════════════ -->
+<script>
+  // Initial in-memory data store with realistic seed items
+  let memories = [
+    {
+      id: 'mem_h1',
+      type: 'hot',
+      category: 'task',
+      content: 'Implementing Phase 2 canonical memory store CRUD operations.',
+      updated: '3m ago',
+      timestamp: Date.now() - 3 * 60 * 1000
+    },
+    {
+      id: 'mem_h2',
+      type: 'hot',
+      category: 'decision',
+      content: 'Default embedding model confirmed as all-MiniLM-L6-v2.',
+      updated: '18m ago',
+      timestamp: Date.now() - 18 * 60 * 1000
+    },
+    {
+      id: 'mem_c1',
+      type: 'cold',
+      category: 'preference',
+      content: 'Prefers FastAPI for backend development, specifically over Flask for asynchronous APIs.',
+      updated: '2h ago',
+      timestamp: Date.now() - 2 * 3600 * 1000
+    },
+    {
+      id: 'mem_c2',
+      type: 'cold',
+      category: 'personal',
+      content: "The user's name is Ojasvi.",
+      updated: '1d ago',
+      timestamp: Date.now() - 24 * 3600 * 1000
+    }
+  ];
+
+  // Active state filters
+  let currentTab = 'hot';
+  let currentCategory = 'all';
+  let searchQuery = '';
+  let activeEditingId = null;
+
+  // DOM Elements
+  const cardsStack = document.getElementById('cardsStack');
+  const hotCountEl = document.getElementById('hotCount');
+  const coldCountEl = document.getElementById('coldCount');
+  const tabHotBtn = document.getElementById('tabHot');
+  const tabColdBtn = document.getElementById('tabCold');
+  const vaultSearch = document.getElementById('vaultSearch');
+  const categoryChips = document.getElementById('categoryChips');
+  const btnAddMemory = document.getElementById('btnAddMemory');
+  const newMemoryPanel = document.getElementById('newMemoryPanel');
+  const btnCancelAdd = document.getElementById('btnCancelAdd');
+  const btnSaveAdd = document.getElementById('btnSaveAdd');
+  const newMemType = document.getElementById('newMemType');
+  const newMemCategory = document.getElementById('newMemCategory');
+  const newMemContent = document.getElementById('newMemContent');
+
+  // Helper: Category badge class mapper
+  function getCategoryBadgeClass(category) {
+    const c = (category || '').toLowerCase();
+    switch (c) {
+      case 'task': return 'badge-task';
+      case 'decision': return 'badge-decision';
+      case 'preference': return 'badge-preference';
+      case 'personal': return 'badge-personal';
+      case 'project': return 'badge-project';
+      case 'technical': return 'badge-technical';
+      default: return 'badge-summary';
+    }
+  }
+
+  // Update dynamic count indicators
+  function updateCounters() {
+    const hotCount = memories.filter(m => m.type === 'hot').length;
+    const coldCount = memories.filter(m => m.type === 'cold').length;
+    if (hotCountEl) hotCountEl.textContent = hotCount;
+    if (coldCountEl) coldCountEl.textContent = coldCount;
+  }
+
+  // Filter Pipeline: tab type + category chip + fuzzy/substring search
+  function getFilteredMemories() {
+    return memories.filter(item => {
+      // 1. Tab Match
+      if (item.type !== currentTab) return false;
+      
+      // 2. Category Match
+      if (currentCategory !== 'all' && item.category.toLowerCase() !== currentCategory.toLowerCase()) {
+        return false;
+      }
+      
+      // 3. Search Query Match (Content, Category, or ID)
+      if (searchQuery.trim() !== '') {
+        const q = searchQuery.toLowerCase().trim();
+        const inContent = item.content.toLowerCase().includes(q);
+        const inCat = item.category.toLowerCase().includes(q);
+        const inId = item.id.toLowerCase().includes(q);
+        if (!inContent && !inCat && !inId) return false;
+      }
+      
+      return true;
+    });
+  }
+
+  // Render the memory cards stack
+  function renderCards() {
+    updateCounters();
+    const items = getFilteredMemories();
+    cardsStack.innerHTML = '';
+
+    if (items.length === 0) {
+      cardsStack.innerHTML = `
+        <div class="empty-stack-state">
+          <div class="empty-title">No ${currentTab === 'hot' ? 'Hot' : 'Cold'} Memories Found</div>
+          <div class="empty-subtitle">Try adjusting your category filter or search terms.</div>
+        </div>
+      `;
+      return;
+    }
+
+    items.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'memory-card';
+      card.id = `card_${item.id}`;
+
+      const isEditing = (activeEditingId === item.id);
+
+      if (isEditing) {
+        // In-Place Card Editing Form
+        card.innerHTML = `
+          <div class="card-header-row">
+            <div class="card-header-left">
+              <span class="category-badge ${getCategoryBadgeClass(item.category)}">[${item.category.toUpperCase()}]</span>
+              <span class="card-timestamp">${item.updated}</span>
+            </div>
+            <span class="card-id-chip">[id: ${item.id}]</span>
+          </div>
+          <div class="edit-mode-container">
+            <textarea class="edit-textarea" id="edit_textarea_${item.id}">${item.content}</textarea>
+            <div class="edit-actions-row">
+              <button class="edit-cancel-btn" onclick="cancelEditing('${item.id}')" title="Discard changes (Esc)">Escape: Cancel</button>
+              <button class="edit-save-btn" onclick="saveEditing('${item.id}')" title="Save changes">Save Changes</button>
+            </div>
+          </div>
+        `;
+      } else {
+        // Standard Card Display Mode
+        const promoteBtnHtml = (item.type === 'hot') 
+          ? `<button class="card-btn btn-promote" onclick="promoteToCold('${item.id}')" title="Promote to persistent cold memory">Promote to Cold</button>`
+          : ``;
+
+        card.innerHTML = `
+          <div class="card-header-row">
+            <div class="card-header-left">
+              <span class="category-badge ${getCategoryBadgeClass(item.category)}">[${item.category.toUpperCase()}]</span>
+              <span class="card-timestamp">Updated ${item.updated}</span>
+            </div>
+            <span class="card-id-chip">[id: ${item.id}]</span>
+          </div>
+          <div class="card-body-text">${escapeHtml(item.content)}</div>
+          <div class="card-toolbar">
+            <button class="card-btn" onclick="startEditing('${item.id}')" title="Edit content">Edit</button>
+            <button class="card-btn btn-delete" onclick="deleteMemory('${item.id}')" title="Delete record">Delete</button>
+            ${promoteBtnHtml}
+          </div>
+        `;
+      }
+
+      cardsStack.appendChild(card);
+    });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // Tab switching
+  tabHotBtn.addEventListener('click', () => {
+    currentTab = 'hot';
+    tabHotBtn.classList.add('active');
+    tabColdBtn.classList.remove('active');
+    renderCards();
+  });
+
+  tabColdBtn.addEventListener('click', () => {
+    currentTab = 'cold';
+    tabColdBtn.classList.add('active');
+    tabHotBtn.classList.remove('active');
+    renderCards();
+  });
+
+  // Search input
+  vaultSearch.addEventListener('input', (e) => {
+    searchQuery = e.target.value;
+    renderCards();
+  });
+
+  // Category chip toggle
+  categoryChips.querySelectorAll('.category-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      categoryChips.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      currentCategory = chip.dataset.cat;
+      renderCards();
+    });
+  });
+
+  // In-Place Card Editing Handlers
+  window.startEditing = function(id) {
+    activeEditingId = id;
+    renderCards();
+    setTimeout(() => {
+      const textarea = document.getElementById(`edit_textarea_${id}`);
+      if (textarea) {
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+      }
+    }, 20);
+  };
+
+  window.cancelEditing = function(id) {
+    activeEditingId = null;
+    renderCards();
+  };
+
+  window.saveEditing = function(id) {
+    const textarea = document.getElementById(`edit_textarea_${id}`);
+    if (!textarea) return;
+    const newContent = textarea.value.trim();
+    if (!newContent) {
+      alert('Content cannot be empty.');
+      return;
+    }
+
+    const item = memories.find(m => m.id === id);
+    if (item) {
+      item.content = newContent;
+      item.updated = 'Just now';
+      item.timestamp = Date.now();
+    }
+    activeEditingId = null;
+    renderCards();
+  };
+
+  // Single-Click Promotion: Hot -> Cold
+  window.promoteToCold = function(id) {
+    const item = memories.find(m => m.id === id);
+    if (item) {
+      item.type = 'cold';
+      item.updated = 'Just now';
+      item.timestamp = Date.now();
+      renderCards();
+    }
+  };
+
+  // Single-Click Deletion
+  window.deleteMemory = function(id) {
+    memories = memories.filter(m => m.id !== id);
+    if (activeEditingId === id) activeEditingId = null;
+    renderCards();
+  };
+
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (activeEditingId !== null) {
+        activeEditingId = null;
+        renderCards();
+      }
+      if (newMemoryPanel && newMemoryPanel.style.display !== 'none') {
+        newMemoryPanel.style.display = 'none';
+      }
+    }
+  });
+
+  // Inline Quick Add Memory
+  btnAddMemory.addEventListener('click', () => {
+    const isVisible = newMemoryPanel.style.display !== 'none';
+    if (isVisible) {
+      newMemoryPanel.style.display = 'none';
+    } else {
+      newMemoryPanel.style.display = 'block';
+      newMemContent.value = '';
+      newMemType.value = currentTab;
+      newMemContent.focus();
+    }
+  });
+
+  btnCancelAdd.addEventListener('click', () => {
+    newMemoryPanel.style.display = 'none';
+  });
+
+  btnSaveAdd.addEventListener('click', () => {
+    const content = newMemContent.value.trim();
+    if (!content) {
+      alert('Please enter memory content.');
+      return;
+    }
+    const type = newMemType.value;
+    const cat = newMemCategory.value;
+    const newId = 'mem_' + (type === 'hot' ? 'h' : 'c') + (memories.length + 1);
+
+    memories.unshift({
+      id: newId,
+      type: type,
+      category: cat,
+      content: content,
+      updated: 'Just now',
+      timestamp: Date.now()
+    });
+
+    newMemoryPanel.style.display = 'none';
+    if (currentTab !== type) {
+      if (type === 'hot') tabHotBtn.click();
+      else tabColdBtn.click();
+    } else {
+      renderCards();
+    }
+  });
+
+  // Ambient Memory Badge Click interaction
+  window.jumpToMemory = function(targetId, expectedType) {
+    // 1. Switch to corresponding tab
+    if (expectedType === 'hot') {
+      tabHotBtn.click();
+    } else {
+      tabColdBtn.click();
+    }
+
+    // 2. Reset category and search if necessary so the item is visible
+    if (currentCategory !== 'all') {
+      const allChip = categoryChips.querySelector('[data-cat="all"]');
+      if (allChip) allChip.click();
+    }
+    if (searchQuery !== '') {
+      vaultSearch.value = '';
+      searchQuery = '';
+      renderCards();
+    }
+
+    // 3. Scroll target card into view smoothly & flash accent ring
+    setTimeout(() => {
+      const targetCard = document.getElementById(`card_${targetId}`);
+      if (targetCard) {
+        targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetCard.classList.remove('highlight-flash');
+        void targetCard.offsetWidth; // Trigger reflow
+        targetCard.classList.add('highlight-flash');
+        setTimeout(() => {
+          targetCard.classList.remove('highlight-flash');
+        }, 1600);
+      }
+    }, 80);
+  };
+
+  // Chat message submission
+  const chatInput = document.getElementById('chatInput');
+  const btnSend = document.getElementById('btnSend');
+  const chatStream = document.getElementById('chatStream');
+
+  function sendChatMessage() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    chatInput.value = '';
+
+    // Append user message
+    const userRow = document.createElement('div');
+    userRow.className = 'message-row user';
+    userRow.innerHTML = `<div class="message-bubble">${escapeHtml(text)}</div>`;
+    chatStream.appendChild(userRow);
+    chatStream.scrollTop = chatStream.scrollHeight;
+
+    // Simulated SAGE assistant response with ambient memory pill
+    setTimeout(() => {
+      const astRow = document.createElement('div');
+      astRow.className = 'message-row assistant';
+      
+      const newHotId = 'mem_h' + (memories.length + 1);
+      memories.unshift({
+        id: newHotId,
+        type: 'hot',
+        category: 'task',
+        content: `Investigating: "${text}"`,
+        updated: 'Just now',
+        timestamp: Date.now()
+      });
+      renderCards();
+
+      astRow.innerHTML = `
+        <div class="message-bubble">
+          <div class="assistant-meta">
+            <span class="assistant-avatar">S</span>
+            <span>SAGE Assistant</span>
+          </div>
+          <div>
+            Understood. I have verified your request and recorded it into your active session context.
+          </div>
+          <div>
+            <div class="ambient-memory-pill" onclick="jumpToMemory('${newHotId}', 'hot')" title="Inspect in Memory Vault">
+              <span>Hot Memory Stored · task · "${escapeHtml(text.slice(0, 30))}"</span>
+              <span class="pill-action">[View ↗]</span>
+            </div>
+          </div>
+        </div>
+      `;
+      chatStream.appendChild(astRow);
+      chatStream.scrollTop = chatStream.scrollHeight;
+    }, 450);
+  }
+
+  btnSend.addEventListener('click', sendChatMessage);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      sendChatMessage();
+    }
+  });
+
+  // Initial render
+  renderCards();
+</script>
+
+</body>
+</html>

@@ -148,8 +148,15 @@ def tool_code_solve_task(
 
     # ── Live sandbox mode ──────────────────────────────────────────────────────
     try:
-        if code:
-            # Run the provided code directly in the sandbox
+        # If an instruction is provided (e.g. solve, fix, analyze, generate, refactor),
+        # ALWAYS invoke the coder specialist model (Qwen2.5-Coder) so it can review and produce
+        # the fixed/optimized code. Only if instruction is purely "run"/"execute" without request
+        # to modify the code do we bypass LLM.
+        is_pure_exec = (
+            bool(code)
+            and instruction.strip().lower() in ("run", "execute", "run code", "execute code", "run this", "execute this")
+        )
+        if is_pure_exec:
             raw_llm_response = f"```{effective_lang}\n{code}\n```"
         else:
             raw_llm_response = _get_llm_code_response(

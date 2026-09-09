@@ -176,8 +176,14 @@ class Orchestrator:
                 rich_socket["status"] = disp_res.status
                 rich_socket["error"] = disp_res.error
 
-            trace.append({"actor": "document_db", "action": resolved_fn,
-                           "status": disp_res.status, "duration_ms": disp_res.duration_ms})
+            trace.append({
+                "actor": "document_db",
+                "action": resolved_fn,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "input": disp_args,
+                "output": rich_socket,
+            })
 
             # Record referenced image if artifact_fetch retrieved an image
             if resolved_fn == "artifact_fetch" and (disp_res.status == "success" or rich_socket.get("status") == "success"):
@@ -311,9 +317,15 @@ class Orchestrator:
             )
             rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {"status": disp_res.status}
 
-            trace.append({"actor": "vision_ocr", "action": "analyze_image",
-                           "image_id": image_id, "status": disp_res.status,
-                           "duration_ms": disp_res.duration_ms})
+            trace.append({
+                "actor": "vision_ocr",
+                "action": "analyze_image",
+                "image_id": image_id,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "input": {"doc_id": doc_id, "image_id": image_id, "instruction": instruction},
+                "output": rich_socket.get("analysis") or rich_socket,
+            })
 
             # Record referenced confident image if vision succeeded
             if disp_res.status == "success" or rich_socket.get("status") == "success":
@@ -372,13 +384,23 @@ class Orchestrator:
             succeeded = res_dict.get("succeeded", disp_res.status == "success")
             exec_status = res_dict.get("execution_status", "success" if succeeded else "error")
             trace.append({
-                "actor": "coder", "action": "executed_code",
+                "actor": "coder",
+                "action": "executed_code",
                 "status": exec_status,
                 "language": res_dict.get("language", language or "python"),
                 "exit_code": res_dict.get("exit_code"),
                 "wall_time_ms": res_dict.get("wall_time_ms", disp_res.duration_ms),
+                "duration_ms": res_dict.get("wall_time_ms", disp_res.duration_ms),
                 "attempts": res_dict.get("attempts", 1),
                 "stdout_preview": (res_dict.get("stdout") or "")[:200],
+                "input": {"instruction": instruction or task, "language": language or "python", "code": code},
+                "output": {
+                    "code": res_dict.get("final_code") or res_dict.get("code") or "",
+                    "stdout": res_dict.get("stdout") or "",
+                    "stderr": res_dict.get("stderr") or "",
+                    "exit_code": res_dict.get("exit_code", 0),
+                    "attempts": res_dict.get("attempts", 1),
+                },
             })
 
             # Cache code artifact in model_runtime
@@ -423,6 +445,15 @@ class Orchestrator:
                 "error": disp_res.error,
             }
 
+            trace.append({
+                "actor": "math",
+                "action": "calculate",
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "input": {"expression": expr},
+                "output": rich_socket,
+            })
+
             return map_tool_result_for_gemma(
                 "math", "calculate", rich_socket,
                 call_index=call_index, mapper_fn=map_math_result,
@@ -465,6 +496,8 @@ class Orchestrator:
                 "status": disp_res.status,
                 "duration_ms": disp_res.duration_ms,
                 "answer_preview": (rich_socket.get("answer") or "")[:200],
+                "input": query,
+                "output": rich_socket.get("answer") or rich_socket,
             })
 
             return map_tool_result_for_gemma(
@@ -490,9 +523,15 @@ class Orchestrator:
             )
             rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {"status": disp_res.status}
 
-            trace.append({"actor": "document_db", "action": "retrieved_content",
-                           "query": query, "status": disp_res.status,
-                           "duration_ms": disp_res.duration_ms})
+            trace.append({
+                "actor": "document_db",
+                "action": "retrieved_content",
+                "query": query,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "input": {"query": query, "doc_ids": doc_ids},
+                "output": rich_socket,
+            })
 
             return map_tool_result_for_gemma(
                 "document_database", "rag_search", rich_socket,
@@ -776,7 +815,11 @@ class Orchestrator:
                 history.pop()
 
                 if parsed is None:
-                    raise RuntimeError(f"Gemma failed to produce valid JSON after repair attempt. Raw: {raw_output}")
+                    if accumulated_tool_evidence and loop_count > 1:
+                        logger.warning("Gemma produced non-JSON text after tools ran; treating as finalization brief.")
+                        parsed = {"type": "final", "answer": raw_output.strip()}
+                    else:
+                        raise RuntimeError(f"Gemma failed to produce valid JSON after repair attempt. Raw: {raw_output}")
 
             # Process Response
             res_type = parsed.get("type")
@@ -1082,6 +1125,9 @@ class Orchestrator:
                             "action": "final_synthesis",
                             "loop": loop_count,
                             "answer_preview": final_answer[:200],
+                            "input": calls[0].get("arguments", {}).get("query") or user_objective,
+                            "output": final_answer,
+                            "duration_ms": (wall_end - t_call_start) * 1000,
                         })
                         _emit({
                             "event": "final_synthesis",
@@ -1112,7 +1158,10 @@ class Orchestrator:
                 raise RuntimeError(f"Unexpected response type from Gemma: {res_type}")
 
         if final_answer is None:
-            raise RuntimeError(f"Maximum agent loops ({config.MAX_AGENT_LOOPS}) reached without generating a final response.")
+            if accumulated_tool_evidence:
+                final_answer = "Analysis completed based on accumulated specialist findings."
+            else:
+                raise RuntimeError(f"Maximum agent loops ({config.MAX_AGENT_LOOPS}) reached without generating a final response.")
 
         # Fallback detection for referenced images mentioned in final answer
         if final_answer:

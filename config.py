@@ -11,22 +11,29 @@ ARTIFACTS_ROOT = Path(os.environ.get("SAGE_ARTIFACTS_ROOT", str(BASE_DIR / "arti
 MODEL_RUNTIME_ROOT = ARTIFACTS_ROOT / "model_runtime"
 CHROMA_ROOT = Path(os.environ.get("SAGE_CHROMA_ROOT", str(BASE_DIR / "chroma_db")))
 
-# Optional .env loading (lightweight, stdlib-only, does not override active environment)
+# .env loading (prioritizes local .env file)
 _env_file = BASE_DIR / ".env"
 if _env_file.is_file():
     try:
-        with open(_env_file, "r", encoding="utf-8") as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if not _line or _line.startswith("#") or "=" not in _line:
-                    continue
-                _k, _v = _line.split("=", 1)
-                _k = _k.strip()
-                _v = _v.strip().strip("'\"")
-                if _k and _k not in os.environ:
-                    os.environ[_k] = _v
+        import dotenv
+        dotenv.load_dotenv(dotenv_path=_env_file, override=True)
     except Exception:
-        pass
+        try:
+            with open(_env_file, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if not _line or _line.startswith("#") or "=" not in _line:
+                        continue
+                    _k, _v = _line.split("=", 1)
+                    _k = _k.strip()
+                    _v = _v.strip().strip("'\"")
+                    if _k:
+                        os.environ[_k] = _v
+        except Exception:
+            pass
+
+# Gemma Context Window
+GEMMA_CONTEXT = int(os.environ.get("GEMMA_CONTEXT", "16384"))
 
 # Ensure directories exist
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -137,7 +144,7 @@ MODELS = {
         "name": "Gemma 4B Instruct",
         "model_path": os.path.join(MODEL_DIR, "gemma-4-E4B-it-Q4_K_M.gguf"),
         "mmproj": None,
-        "context": int(os.environ.get("GEMMA_CONTEXT", "16384")),
+        "context": GEMMA_CONTEXT,
         "ngl": 999,
         "temperature": 0.20,
         "max_tokens": 2048,

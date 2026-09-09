@@ -123,12 +123,13 @@ def _auto_close_brackets(cand: str) -> Optional[dict[str, Any]]:
         b = stack.pop()
         closing += "}" if b == "{" else "]"
 
-    try:
-        data = json.loads(cand + closing)
-        if isinstance(data, dict) and "type" in data:
-            return data
-    except Exception:
-        pass
+    for strict in (True, False):
+        try:
+            data = json.loads(cand + closing, strict=strict)
+            if isinstance(data, dict) and "type" in data:
+                return data
+        except Exception:
+            pass
     return None
 
 
@@ -136,26 +137,29 @@ def parse_agent_json(raw_text: str) -> Optional[dict[str, Any]]:
     """Parse raw agent output into a dictionary.
 
     Returns the parsed dict if valid and contains 'type', or None.
+    Supports strict=False to handle literal newlines and control chars in LLM strings.
     """
     if not raw_text or not raw_text.strip():
         return None
 
-    # Try direct parse first
-    try:
-        data = json.loads(raw_text.strip())
-        if isinstance(data, dict) and "type" in data:
-            return data
-    except Exception:
-        pass
+    # Try direct parse first (strict and non-strict)
+    for strict in (True, False):
+        try:
+            data = json.loads(raw_text.strip(), strict=strict)
+            if isinstance(data, dict) and "type" in data:
+                return data
+        except Exception:
+            pass
 
     # Clean and try again
     cleaned = clean_json_string(raw_text)
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict) and "type" in data:
-            return data
-    except Exception:
-        pass
+    for strict in (True, False):
+        try:
+            data = json.loads(cleaned, strict=strict)
+            if isinstance(data, dict) and "type" in data:
+                return data
+        except Exception:
+            pass
 
     # Recover when trailing closing brace(s), quote(s), or bracket(s) are omitted
     for candidate in (cleaned, raw_text.strip()):
@@ -165,17 +169,31 @@ def parse_agent_json(raw_text: str) -> Optional[dict[str, Any]]:
 
         # Fast single trailing brace check
         if not cand.endswith("}"):
-            try:
-                data = json.loads(cand + "\n}")
-                if isinstance(data, dict) and "type" in data:
-                    return data
-            except Exception:
-                pass
+            for strict in (True, False):
+                try:
+                    data = json.loads(cand + "\n}", strict=strict)
+                    if isinstance(data, dict) and "type" in data:
+                        return data
+                except Exception:
+                    pass
 
         # Intelligent stack-based bracket auto-closure
         repaired = _auto_close_brackets(cand)
         if repaired is not None:
             return repaired
+
+    # Robust regex fallback for final answer with unescaped internal quotes or newlines
+    m = re.search(r'"type"\s*:\s*"final"\s*,\s*"answer"\s*:\s*"', raw_text, re.DOTALL)
+    if not m:
+        m = re.search(r'"answer"\s*:\s*"', raw_text, re.DOTALL)
+    if m:
+        start_pos = m.end()
+        end_brace = raw_text.rfind('}')
+        if end_brace > start_pos:
+            end_quote = raw_text.rfind('"', start_pos, end_brace)
+            if end_quote != -1:
+                ans = raw_text[start_pos:end_quote]
+                return {"type": "final", "answer": ans.strip()}
 
     return None
 

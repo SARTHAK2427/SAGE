@@ -4,137 +4,827 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAGE — Local Multi-Model Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=2.4">
+    <meta name="description" content="SAGE — Sequential Multi-Model Local Agent Orchestrator.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="app-container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <div class="logo-icon">🌿</div>
-                <div>
-                    <h1>SAGE</h1>
-                    <p class="subtitle">Sequential Multi-Model Local Agent Orchestrator</p>
+<div class="app-shell">
+
+    <!-- ════ LEFT SIDEBAR REVEAL BUTTON (fixed, shown when collapsed) ════ -->
+    <button class="reveal-btn reveal-left" id="openLeftBtn" title="Open sidebar">
+        <img src="/static/sage-logo.png" class="reveal-logo-img" alt="SAGE Logo">
+    </button>
+
+    <!-- ════════════════════ LEFT SIDEBAR ════════════════════ -->
+    <aside class="sidebar-left" id="sidebarLeft">
+
+        <!-- Brand header -->
+        <div class="sidebar-header">
+            <div class="brand-mark">
+                <img src="/static/sage-logo.png" class="brand-logo-img" alt="SAGE Logo" title="SAGE">
+            </div>
+            <button class="icon-btn" id="closeLeftBtn" title="Collapse">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            </button>
+        </div>
+
+        <!-- Sidebar scrollable body -->
+        <div class="sidebar-body">
+            <button class="new-chat-btn" id="newChatBtn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New Chat
+            </button>
+
+            <div class="sidebar-search">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="searchInput" placeholder="Search conversations">
+            </div>
+
+            <div class="sec-label">HISTORY</div>
+            <nav class="history-list" id="historyList">
+                <div class="history-item active" data-id="1">
+                    <div class="h-text">
+                        <span class="h-title">Inspection report analysis</span>
+                        <span class="h-time">Today · 14:32</span>
+                    </div>
+                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+                <div class="history-item" data-id="2">
+                    <div class="h-text">
+                        <span class="h-title">Compliance script draft</span>
+                        <span class="h-time">Today · 13:19</span>
+                    </div>
+                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+                <div class="history-item" data-id="3">
+                    <div class="h-text">
+                        <span class="h-title">Compare SOP revisions</span>
+                        <span class="h-time">Yesterday · 18:42</span>
+                    </div>
+                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+                <div class="history-item" data-id="4">
+                    <div class="h-text">
+                        <span class="h-title">Extract SOP requirements</span>
+                        <span class="h-time">Yesterday · 16:03</span>
+                    </div>
+                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+                <div class="history-item" data-id="5">
+                    <div class="h-text">
+                        <span class="h-title">Summarize safety manual</span>
+                        <span class="h-time">Mon · 09:41</span>
+                    </div>
+                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </nav>
+        </div>
+
+        <!-- Settings at bottom -->
+        <div class="sidebar-foot">
+            <button class="settings-trigger" id="settingsBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+            </button>
+        </div>
+
+        <!-- Settings panel (slides up from footer) -->
+        <div class="settings-panel" id="settingsPanel">
+            <div class="sp-header">
+                <span>Settings</span>
+                <button class="icon-btn" id="closeSettingsBtn">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="sp-body">
+                <div class="sp-group">
+                    <div class="sp-group-label">APPEARANCE</div>
+                    <div class="sp-row">
+                        <span>Theme</span>
+                        <select class="sp-select"><option>Light</option><option>Dark</option><option>System</option></select>
+                    </div>
+                    <div class="sp-row">
+                        <span>Font size</span>
+                        <select class="sp-select"><option>Small</option><option selected>Medium</option><option>Large</option></select>
+                    </div>
+                </div>
+                <div class="sp-group">
+                    <div class="sp-group-label">MODEL</div>
+                    <div class="sp-row">
+                        <span>Default model</span>
+                        <select class="sp-select"><option>Auto</option><option>Gemma 4B</option><option>Qwen3-VL</option></select>
+                    </div>
+                    <div class="sp-row">
+                        <span>Temperature</span>
+                        <select class="sp-select"><option>0.3</option><option selected>0.7</option><option>1.0</option></select>
+                    </div>
+                </div>
+                <div class="sp-group">
+                    <div class="sp-group-label">PRIVACY</div>
+                    <div class="sp-row">
+                        <span>Save history</span>
+                        <label class="toggle"><input type="checkbox" checked><span class="tk"></span></label>
+                    </div>
+                    <div class="sp-row">
+                        <span>Send telemetry</span>
+                        <label class="toggle"><input type="checkbox"><span class="tk"></span></label>
+                    </div>
                 </div>
             </div>
-            <div class="header-right">
-                <div class="model-badge" id="statusBadge">
-                    <span class="status-dot online"></span>
-                    <span id="currentModelLabel">System Ready</span>
+        </div>
+
+        <!-- Drag resize handle -->
+        <div class="drag-handle drag-left" id="leftDragHandle"></div>
+    </aside>
+
+    <!-- ════════════════════ CHAT MAIN ════════════════════ -->
+    <main class="chat-main" id="chatMain" data-state="initial">
+        <!-- Interactive Threads WebGL Background for Chat Tab -->
+        <canvas class="chat-threads-canvas" id="chatThreadsCanvas"></canvas>
+
+        <!-- Tabs (centered pill, hidden scrollbar) -->
+        <div class="tabs-wrapper">
+            <nav class="chat-tabs" id="chatTabs">
+                <button class="tab-btn active" data-tab="chat">Chat</button>
+                <button class="tab-btn" data-tab="artifacts">Artifacts</button>
+                <button class="tab-btn" data-tab="tools-models">Tools &amp; Models</button>
+                <button class="tab-btn" data-tab="memory">Memory</button>
+            </nav>
+        </div>
+
+        <!-- Chat body: welcome + messages + input all live here -->
+        <div class="chat-body" id="chatBody">
+
+            <!-- Welcome overlay (initial state) -->
+            <div class="welcome-overlay" id="welcomeOverlay">
+                <div class="welcome-icon">
+                    <img src="/static/sage-logo.png" class="welcome-logo-img" alt="SAGE Logo">
+                </div>
+                <h1 class="welcome-heading">How may I help you</h1>
+            </div>
+
+            <!-- Messages (active state) -->
+            <div class="chat-messages" id="chatMessages"></div>
+
+            <!-- Drag-and-drop overlay -->
+            <div class="drop-zone" id="dropZoneOverlay">
+                <div class="drop-zone-inner">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span>Drop files to attach</span>
                 </div>
             </div>
-        </header>
 
-        <!-- Main Content Layout -->
-        <main class="main-layout">
-            <!-- Chat Container -->
-            <section class="chat-section">
-                <div class="chat-history" id="chatHistory">
-                    <div class="welcome-card">
-                        <h3>Welcome to SAGE</h3>
-                        <p>Four specialized models cooperating on genuine tasks through sequential orchestration:</p>
-                        <div class="model-grid-summary">
-                            <div class="summary-card">
-                                <strong>🧠 Gemma 4B</strong>
-                                <span>Agent Controller & Tool Reasoner</span>
-                            </div>
-                            <div class="summary-card">
-                                <strong>📄 Qwen3-VL 4B</strong>
-                                <span>Document Analyzer & Multimodal OCR</span>
-                            </div>
-                            <div class="summary-card">
-                                <strong>💻 Qwen2.5-Coder 7B</strong>
-                                <span>Code Generation & Review Specialist</span>
-                            </div>
-                            <div class="summary-card">
-                                <strong>✨ Qwen3.5 2B</strong>
-                                <span>Dedicated Response Synthesizer</span>
-                            </div>
-                        </div>
-                        <p class="hint">Attach a PDF, DOCX, image, or text file, or type an objective below.</p>
-                    </div>
-                </div>
+            <!-- Input area (Claude / ChatGPT style unified card) -->
+            <div class="chat-input-area" id="chatInputArea">
+                <input type="file" id="fileInput" multiple style="display:none">
+                <div class="input-card" id="inputCard">
+                    <!-- Attachments preview tray (ChatGPT style, inside the card at top) -->
+                    <div class="attachments-tray" id="attachmentsTray"></div>
 
-                <!-- Input Area -->
-                <div class="input-container">
-                    <!-- Attachments Preview Area -->
-                    <div class="attachments-tray" id="attachmentsTray" style="display: none;"></div>
-
-                    <!-- Drop Zone Overlay (Hidden until drag) -->
-                    <div class="drop-zone-overlay" id="dropZoneOverlay">
-                        <div class="drop-zone-content">
-                            <span>📁 Drop files here to attach to SAGE</span>
-                        </div>
+                    <!-- Text input area -->
+                    <div class="input-text-wrap">
+                        <textarea id="promptInput" rows="1" placeholder="Ask SAGE"></textarea>
                     </div>
 
-                    <!-- Input Bar -->
-                    <div class="input-bar">
-                        <input type="file" id="fileInput" multiple style="display: none;">
-                        <button type="button" class="btn-icon" id="attachBtn" title="Attach Files (PDF, DOCX, Images, Text)">
-                            📎
-                        </button>
-                        <textarea 
-                            id="promptInput" 
-                            rows="2" 
-                            placeholder="Enter your task or ask SAGE to analyze documents / write code... (Paste images directly with Ctrl+V)"
-                        ></textarea>
-                        <button type="button" class="btn-send" id="sendBtn">
-                            <span>Send</span>
-                            <span class="send-icon">➤</span>
-                        </button>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Trace & Telemetry Sidebar -->
-            <aside class="trace-section" id="traceSidebar">
-                <div class="trace-header">
-                    <h2>🔍 Agent Trace & Telemetry</h2>
-                </div>
-
-                <!-- Telemetry Stats -->
-                <div class="telemetry-card" id="telemetryCard" style="display: none;">
-                    <div class="telemetry-title">Latest Run Metrics</div>
-                    <div class="metrics-grid">
-                        <div class="metric-item">
-                            <span class="metric-label">🧠 Gemma 4B:</span>
-                            <span class="metric-val" id="metricAgentCalls">0</span>
+                    <!-- Bottom toolbar with attach button and send button (like Claude) -->
+                    <div class="input-toolbar">
+                        <div class="it-left">
+                            <button class="iab attach-btn" id="attachBtn" title="Attach document or file">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                            </button>
                         </div>
-                        <div class="metric-item">
-                            <span class="metric-label">📄 Qwen3-VL:</span>
-                            <span class="metric-val" id="metricDocCalls">0</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">💻 Qwen2.5-Coder:</span>
-                            <span class="metric-val" id="metricCoderCalls">0</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">✨ Qwen3.5 2B:</span>
-                            <span class="metric-val" id="metricSynthesizerCalls">0</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Qwen3.5 Time:</span>
-                            <span class="metric-val highlight" id="metricSynthTime">0.00s</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Model Switches:</span>
-                            <span class="metric-val" id="metricSwitches">0</span>
-                        </div>
-                        <div class="metric-item full-width">
-                            <span class="metric-label">Total Wall Time:</span>
-                            <span class="metric-val highlight" id="metricWallTime">0.00s</span>
+                        <div class="it-right">
+                            <button class="stop-btn" id="stopBtn" style="display:none">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                                Stop
+                            </button>
+                            <button class="send-btn" id="sendBtn" title="Send message">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
 
-                <!-- Trace Events Stream -->
-                <div class="trace-timeline" id="traceTimeline">
-                    <div class="trace-empty">Execution steps and model switches will appear here in real-time.</div>
+        <!-- ════════════════════ 3D ARTIFACT GRAPH VIEW ════════════════════ -->
+        <div class="artifacts-view" id="artifactsView" style="display: none;">
+            <!-- Top HUD Bar: Search, Category Filters, Options -->
+            <div class="graph-hud-top">
+                <div class="graph-search-box">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" id="graphSearchInput" placeholder="Search artifacts..." autocomplete="off">
+                    <button class="graph-clear-search" id="graphClearSearchBtn" style="display:none;" title="Clear search">&times;</button>
                 </div>
-            </aside>
-        </main>
+
+                <div class="graph-filter-pills" id="graphFilterPills">
+                    <button class="graph-pill active" data-type="all">All</button>
+                    <button class="graph-pill" data-type="pdf">PDF</button>
+                    <button class="graph-pill" data-type="docx">DOCX</button>
+                    <button class="graph-pill" data-type="image">Images</button>
+                    <button class="graph-pill" data-type="code">Code</button>
+                    <button class="graph-pill" data-type="text">Text</button>
+                </div>
+
+                <div class="graph-options">
+                    <label class="graph-toggle-label" title="Toggle showing only artifacts that have connections">
+                        <input type="checkbox" id="graphConnectedToggle">
+                        <span>Connected Only</span>
+                    </label>
+                    <button class="graph-add-files-btn" id="graphAddFilesBtn" title="Add files to preview as 3D artifacts" onclick="document.getElementById('artifactFileInput') &amp;&amp; document.getElementById('artifactFileInput').click()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        <span>Add Files</span>
+                    </button>
+                    <input type="file" id="artifactFileInput" multiple accept=".pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.csv,.xlsx,.py,.js,.json,.md" style="display:none;">
+                </div>
+            </div>
+
+            <!-- 3D WebGL Canvas Container -->
+            <div class="graph-canvas-container" id="artifactGraphCanvas"></div>
+
+            <!-- Interactive Node Tooltip Card -->
+            <div class="graph-tooltip" id="artifactGraphTooltip" style="display: none;"></div>
+
+            <!-- Bottom Floating HUD: Stats, Controls, Hint -->
+            <div class="graph-hud-bottom">
+                <div class="graph-stats">
+                    <span class="graph-stat-badge" id="graphNodeCount">0 artifacts</span>
+                    <span class="graph-stat-badge" id="graphEdgeCount">0 relations</span>
+                </div>
+                
+                <div class="graph-controls-actions">
+                    <button class="graph-hud-btn" id="graphResetViewBtn" title="Reset 3D camera view">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        <span>Reset View</span>
+                    </button>
+                    <button class="graph-hud-btn" id="graphFocusSelectedBtn" title="Focus camera on selected node">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M3 12h3m12 0h3M12 3v3m0 12v3"/></svg>
+                        <span>Focus</span>
+                    </button>
+                    <button class="graph-hud-btn" id="graphRefreshBtn" title="Refresh graph data">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                        <span>Refresh</span>
+                    </button>
+                    <button class="graph-hud-btn graph-delete-btn" id="graphDeleteBtn" title="Delete selected artifact" style="display:none; color:#f87171;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        <span>Delete</span>
+                    </button>
+                </div>
+
+                <div class="graph-hint">
+                    <span>Double-click node to preview document · Drag to rotate · Scroll to zoom</span>
+                </div>
+            </div>
+
+            <!-- Empty State Overlay (shown when 0 artifacts) -->
+            <div class="graph-empty-state" id="graphEmptyState" style="display: none;">
+                <div class="ges-icon">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+                </div>
+                <h3>No Artifacts Uploaded Yet</h3>
+                <p>Upload PDFs, Word documents, images, or spreadsheets to explore their interactive 3D relationship graph.</p>
+                <button class="ges-btn" id="graphUploadPromptBtn" onclick="document.getElementById('artifactFileInput') &amp;&amp; document.getElementById('artifactFileInput').click()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span>Upload Document</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- ════════════════════ TOOLS & MODELS VIEW (Whiteboard Architecture) ════════════════════ -->
+        <div class="tools-models-view" id="toolsModelsView" style="display: none;">
+            
+            <!-- Scrollable Content Body -->
+            <div class="tm-content-scroll">
+                <div class="tm-container">
+
+                    <!-- ═══════════ UPPER SECTION: TOOLS (LEFT) | MODELS (RIGHT) ═══════════ -->
+                    <div class="tm-split-panel">
+                        
+                        <!-- LEFT PANEL: TOOLS -->
+                        <div class="tm-panel-col tm-panel-tools">
+                            <div class="tm-panel-header">
+                                <h3 class="tm-panel-title">Tools</h3>
+                                <span class="tm-count-tag">7 Tools</span>
+                            </div>
+
+                            <div class="tm-whiteboard-list tm-tools-scroll-list">
+                                <!-- 1. Document processor -->
+                                <div class="tm-wb-item tm-item-doc">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">document processor</div>
+                                            <div class="tm-wb-sub">Layout, table, metadata &amp; text extraction from PDF, DOCX, TXT</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-doc">Ready</span>
+                                </div>
+
+                                <!-- 2. Semantic search -->
+                                <div class="tm-wb-item tm-item-search">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">semantic search</div>
+                                            <div class="tm-wb-sub">Dense vector embeddings (MiniLM) for contextual artifact retrieval</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-search">Ready</span>
+                                </div>
+
+                                <!-- 3. Keyword match -->
+                                <div class="tm-wb-item tm-item-kw">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">keyword match</div>
+                                            <div class="tm-wb-sub">High-speed BM25 exact lexical pattern matching &amp; token scans</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-kw">Ready</span>
+                                </div>
+
+                                <!-- 4. Artifact search -->
+                                <div class="tm-wb-item tm-item-art">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">artifact search</div>
+                                            <div class="tm-wb-sub">Graph query engine, manifest listing &amp; multi-format asset indexing</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-art">Ready</span>
+                                </div>
+
+                                <!-- 5. Vision call -->
+                                <div class="tm-wb-item tm-item-vision">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">vision call</div>
+                                            <div class="tm-wb-sub">Image inspection, multi-column document OCR &amp; spatial grounding</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-vision">Ready</span>
+                                </div>
+
+                                <!-- 6. Coder call -->
+                                <div class="tm-wb-item tm-item-code">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">coder call</div>
+                                            <div class="tm-wb-sub">Python script synthesis, Docker container sandbox execution &amp; fix loops</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-code">Ready</span>
+                                </div>
+
+                                <!-- 7. Math / miscellaneous -->
+                                <div class="tm-wb-item tm-item-util">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name">math/miscellaneous (developing)</div>
+                                            <div class="tm-wb-sub">Deterministic AST math, formula evaluation, unit conversion &amp; helpers</div>
+                                        </div>
+                                    </div>
+                                    <span class="tm-wb-badge badge-dev">Developing</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RIGHT PANEL: MODELS -->
+                        <div class="tm-panel-col tm-panel-models">
+                            <div class="tm-panel-header">
+                                <h3 class="tm-panel-title">Models</h3>
+                                <span class="tm-count-tag">3 Specialists</span>
+                            </div>
+
+                            <div class="tm-whiteboard-list">
+                                <!-- Reasoning Model Slot -->
+                                <div class="tm-wb-item active-slot tm-slot-reasoning">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name-wrap">
+                                                <span class="tm-wb-role role-reasoning">Reasoning</span>
+                                            </div>
+                                            <div class="tm-wb-sub" id="tmSlotReasoningMeta">Format: GGUF Q4_K_M &middot; Context: 16,384 &middot; VRAM: ~2.9 GB</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-slot-picker-container">
+                                        <button class="tm-slot-btn" id="tmSlotBtnReasoning" data-slot="reasoning" title="Select Reasoning Model">
+                                            <span class="tm-slot-btn-text" id="tmSlotReasoningName">Gemma 4B Instruct</span>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                                        </button>
+                                        <div class="tm-slot-dropdown-menu" id="tmSlotMenuReasoning" style="display:none;">
+                                            <div class="tm-slot-dropdown-header">Installed Models in System</div>
+                                            <div class="tm-slot-dropdown-list" id="tmSlotListReasoning"></div>
+                                            <div class="tm-slot-dropdown-footer">
+                                                <button class="tm-slot-add-more-btn" data-slot="reasoning">
+                                                    <span>Add new model</span>
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Vision Model Slot -->
+                                <div class="tm-wb-item tm-slot-vision">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name-wrap">
+                                                <span class="tm-wb-role role-vision">Vision</span>
+                                            </div>
+                                            <div class="tm-wb-sub" id="tmSlotVisionMeta">Format: GGUF Q4_K_M + mmproj &middot; Context: 4,096 &middot; VRAM: ~3.1 GB</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-slot-picker-container">
+                                        <button class="tm-slot-btn" id="tmSlotBtnVision" data-slot="vision" title="Select Vision Model">
+                                            <span class="tm-slot-btn-text" id="tmSlotVisionName">Qwen3-VL 4B Vision &amp; OCR</span>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                                        </button>
+                                        <div class="tm-slot-dropdown-menu" id="tmSlotMenuVision" style="display:none;">
+                                            <div class="tm-slot-dropdown-header">Installed Models in System</div>
+                                            <div class="tm-slot-dropdown-list" id="tmSlotListVision"></div>
+                                            <div class="tm-slot-dropdown-footer">
+                                                <button class="tm-slot-add-more-btn" data-slot="vision">
+                                                    <span>Add new model</span>
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Coder Model Slot -->
+                                <div class="tm-wb-item tm-slot-coder">
+                                    <div class="tm-wb-row">
+                                        <div class="tm-wb-info">
+                                            <div class="tm-wb-name-wrap">
+                                                <span class="tm-wb-role role-coder">Coder</span>
+                                            </div>
+                                            <div class="tm-wb-sub" id="tmSlotCoderMeta">Format: GGUF Q4_K_M &middot; Context: 8,192 &middot; VRAM: ~4.8 GB</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-slot-picker-container">
+                                        <button class="tm-slot-btn" id="tmSlotBtnCoder" data-slot="coder" title="Select Coder Model">
+                                            <span class="tm-slot-btn-text" id="tmSlotCoderName">Qwen2.5-Coder 7B Instruct</span>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                                        </button>
+                                        <div class="tm-slot-dropdown-menu" id="tmSlotMenuCoder" style="display:none;">
+                                            <div class="tm-slot-dropdown-header">Installed Models in System</div>
+                                            <div class="tm-slot-dropdown-list" id="tmSlotListCoder"></div>
+                                            <div class="tm-slot-dropdown-footer">
+                                                <button class="tm-slot-add-more-btn" data-slot="coder">
+                                                    <span>Add new model</span>
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- ═══════════ FULL-WIDTH DIVIDER LINE ═══════════ -->
+                    <div class="tm-divider-line"></div>
+
+                    <!-- ═══════════ LOWER SECTION: TOP RECOMMENDATIONS ═══════════ -->
+                    <div class="tm-recommendations-section" id="tmRecommendationsSection">
+                        
+                        <div class="tm-rec-top-row">
+                            <div class="tm-rec-title-group">
+                                <h3 class="tm-rec-main-title">Top Recommendations.</h3>
+                                <span class="tm-rec-sub">Verified open-weights models from Hugging Face</span>
+                            </div>
+
+                            <div class="tm-rec-filters">
+                                <div class="tm-rec-search-box">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                    <input type="text" id="tmRecSearchInput" placeholder="Filter recommendations..." autocomplete="off">
+                                </div>
+                                <div class="tm-filter-tabs" id="tmRecPills">
+                                    <button class="tm-tab active" data-filter="all">All</button>
+                                    <button class="tm-tab" data-filter="reasoning">Reasoning</button>
+                                    <button class="tm-tab" data-filter="coding">Coding</button>
+                                    <button class="tm-tab" data-filter="vision">Vision</button>
+                                    <button class="tm-tab" data-filter="small_local">Small / Local</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recommendations List -->
+                        <div class="tm-cards-stack" id="tmRecCardsStream">
+                            <!-- Injected dynamically by JS -->
+                        </div>
+
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ════════════════════ MEMORY VAULT VIEW ════════════════════ -->
+        <div class="memory-vault-view" id="memoryVaultView" style="display: none;">
+            
+            <!-- Top Header & Filter Bar (Spreads across full width) -->
+            <div class="mv-top-header">
+                <div class="mv-header-left">
+                    <h2 class="mv-brand-title">SAGE Memory Vault</h2>
+                </div>
+
+                <div class="mv-header-right">
+                    <!-- Global Search Box -->
+                    <div class="mv-search-box">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" class="mv-search-input" id="mvSearchInput" placeholder="Filter memories by query, category, or ID..." autocomplete="off">
+                        <button class="mv-clear-search" id="mvClearSearchBtn" style="display:none;" title="Clear search">&times;</button>
+                    </div>
+
+                    <!-- Category Filter Chips -->
+                    <div class="mv-chips-row" id="mvCategoryChips">
+                        <button class="mv-chip active" data-cat="all">All</button>
+                        <button class="mv-chip" data-cat="task">Task</button>
+                        <button class="mv-chip" data-cat="decision">Decision</button>
+                        <button class="mv-chip" data-cat="preference">Preference</button>
+                        <button class="mv-chip" data-cat="personal">Personal</button>
+                        <button class="mv-chip" data-cat="project">Project</button>
+                        <button class="mv-chip" data-cat="technical">Technical</button>
+                        <button class="mv-chip" data-cat="summary">Summary</button>
+                    </div>
+
+                    <button class="mv-close-btn" id="mvCloseBtn" title="Back to Chat">&times;</button>
+                </div>
+            </div>
+
+            <!-- Full-Screen Dual Board Split -->
+            <div class="mv-dual-board">
+                
+                <!-- ════════ LEFT COLUMN: HOT MEMORY (SESSION) ════════ -->
+                <div class="mv-tier-col mv-col-hot">
+                    <div class="mv-tier-header">
+                        <div class="mv-tier-title-group">
+                            <div class="mv-tier-badge hot">
+                                <span class="mv-pulse-dot"></span>
+                                <span>HOT MEMORY</span>
+                            </div>
+                            <h3 class="mv-tier-title">Session Scratchpad</h3>
+                            <span class="mv-tier-desc">Real-time working context for current session. Auto-wiped on session reset.</span>
+                        </div>
+                        <div class="mv-tier-count-pill" title="Active session items">
+                            <span class="mv-count-number" id="mvHotCount">0</span>
+                            <span class="mv-count-text">Items</span>
+                        </div>
+                    </div>
+
+                    <!-- Dedicated Hot Memory Input Card -->
+                    <div class="mv-dedicated-input-card hot-input-card">
+                        <div class="mv-dic-header">
+                            <span class="mv-dic-label">Add Session Context</span>
+                            <select id="mvHotCategory" class="mv-dic-select" title="Category">
+                                <option value="task" selected>Task</option>
+                                <option value="decision">Decision</option>
+                                <option value="summary">Summary</option>
+                                <option value="technical">Technical</option>
+                            </select>
+                        </div>
+                        <textarea id="mvHotInput" class="mv-dic-textarea" placeholder="Add session memory (e.g. Working on user authentication; debugging latency in vision tool...)" rows="2"></textarea>
+                        <div class="mv-dic-actions">
+                            <span class="mv-dic-hint">Press Enter to save, Shift+Enter for new line</span>
+                            <button id="mvHotAddBtn" class="mv-dic-submit-btn hot-submit" title="Add entry to session memory">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                <span>Add to Hot Memory</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Hot Memory Cards Stream -->
+                    <div class="mv-tier-cards-stream" id="mvHotCardsStack">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+
+                <!-- ════════ RIGHT COLUMN: COLD MEMORY (PERSISTENT) ════════ -->
+                <div class="mv-tier-col mv-col-cold">
+                    <div class="mv-tier-header">
+                        <div class="mv-tier-title-group">
+                            <div class="mv-tier-badge cold">
+                                <span class="mv-pulse-dot"></span>
+                                <span>COLD MEMORY</span>
+                            </div>
+                            <h3 class="mv-tier-title">Persistent Knowledge Base</h3>
+                            <span class="mv-tier-desc">Durable cross-session memory. Stores user preferences, project conventions &amp; rules.</span>
+                        </div>
+                        <div class="mv-tier-count-pill" title="Persistent vault items">
+                            <span class="mv-count-number" id="mvColdCount">0</span>
+                            <span class="mv-count-text">Items</span>
+                        </div>
+                    </div>
+
+                    <!-- Dedicated Cold Memory Input Card -->
+                    <div class="mv-dedicated-input-card cold-input-card">
+                        <div class="mv-dic-header">
+                            <span class="mv-dic-label">Add Persistent Knowledge</span>
+                            <select id="mvColdCategory" class="mv-dic-select" title="Category">
+                                <option value="preference" selected>Preference</option>
+                                <option value="personal">Personal</option>
+                                <option value="project">Project</option>
+                                <option value="technical">Technical</option>
+                                <option value="decision">Decision</option>
+                            </select>
+                        </div>
+                        <textarea id="mvColdInput" class="mv-dic-textarea" placeholder="Add persistent memory (e.g. Prefers FastAPI backend; always write code with Type Hints...)" rows="2"></textarea>
+                        <div class="mv-dic-actions">
+                            <span class="mv-dic-hint">Persists permanently across sessions &amp; reboots</span>
+                            <button id="mvColdAddBtn" class="mv-dic-submit-btn cold-submit" title="Add entry to persistent memory">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                <span>Add to Cold Memory</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Cold Memory Cards Stream -->
+                    <div class="mv-tier-cards-stream" id="mvColdCardsStack">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- ════════════════════ RIGHT PANEL ════════════════════ -->
+    <aside class="panel-right collapsed" id="panelRight">
+        <!-- Drag resize handle -->
+        <div class="drag-handle drag-right" id="rightDragHandle"></div>
+
+        <!-- Panel header with collapse -->
+        <div class="panel-header">
+            <button class="net-status-pill" id="netStatusBtn" title="Check connection status & data isolation">
+                <span class="net-dot"></span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>Air-Gapped · Zero Leak</span>
+            </button>
+            <button class="icon-btn" id="closeRightBtn" title="Collapse">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+        </div>
+
+        <!-- Scrollable panel content -->
+        <div class="panel-scroll" id="panelScroll">
+            <div class="panel-sec exec-panel-sec">
+                <div class="panel-sec-head">
+                    <div class="panel-section-title">Agent Panel</div>
+                    <div class="exec-badge" id="execBadge">
+                        <span class="exec-dot" id="execStatusDot"></span>
+                        <span id="execStatusText">Idle</span>
+                    </div>
+                </div>
+                <div class="panel-lbl">EXECUTION TILES</div>
+
+                <!-- Execution tiles stream wrapper with top/bottom blur masks -->
+                <div class="exec-stream-wrapper" id="execStreamWrapper">
+                    <div class="edge-blur-top" id="edgeBlurTop"></div>
+                    <div class="exec-tiles-track" id="execTilesTrack">
+                        <!-- Empty state when no tasks are running -->
+                        <div class="exec-empty-state" id="execEmptyState">
+                            <div class="ees-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            </div>
+                            <div class="ees-title">No current activity</div>
+                            <div class="ees-desc">start a new chat with sage to begin .</div>
+                        </div>
+                    </div>
+                    <div class="edge-blur-bottom" id="edgeBlurBottom"></div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ════ RIGHT PANEL REVEAL BUTTON ════ -->
+    <button class="reveal-btn reveal-right show" id="openRightBtn" title="Open panel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+
+    <!-- Network & Leak Status Popup Window (floating to the left of the button) -->
+    <div class="net-status-card" id="netStatusCard" style="display:none;">
+        <div class="nsc-header">
+            <div class="nsc-title">
+                <span class="nsc-icon">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </span>
+                <span>Data &amp; Network Shield</span>
+            </div>
+            <button class="nsc-close" id="closeNetCardBtn" title="Close window">&times;</button>
+        </div>
+        <div class="nsc-body">
+            <div class="nsc-badge">
+                <span class="nsc-pulse-dot"></span>
+                <span>100% LOCAL · ZERO LEAKAGE</span>
+            </div>
+            <p class="nsc-desc">
+                All agent steps, model reasoning, and attached documents run exclusively on your local machine.
+            </p>
+            <div class="nsc-stats">
+                <div class="nsc-stat-row">
+                    <span class="nsc-stat-lbl">External Internet</span>
+                    <span class="nsc-stat-val secure">Blocked / Air-Gapped</span>
+                </div>
+                <div class="nsc-stat-row">
+                    <span class="nsc-stat-lbl">Data Leakage Risk</span>
+                    <span class="nsc-stat-val secure">0% (Completely Safe)</span>
+                </div>
+                <div class="nsc-stat-row">
+                    <span class="nsc-stat-lbl">Active Binding</span>
+                    <span class="nsc-stat-val">127.0.0.1 (Localhost)</span>
+                </div>
+                <div class="nsc-stat-row">
+                    <span class="nsc-stat-lbl">Cloud Relays</span>
+                    <span class="nsc-stat-val secure">None / No API Keys</span>
+                </div>
+            </div>
+            <div class="nsc-footer">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                <span>Verified: Machine is fully air-gapped</span>
+            </div>
+        </div>
     </div>
 
-    <script src="/static/app.js?v=2.4"></script>
+</div>
+
+<!-- ════════════════════ IN-SITE DOCUMENT PREVIEW MODAL ════════════════════ -->
+<div class="doc-preview-modal" id="docPreviewModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="dpmFileName">
+    <div class="dpm-backdrop" id="dpmBackdrop"></div>
+    <div class="dpm-dialog">
+        <!-- Modal Header -->
+        <div class="dpm-header">
+            <div class="dpm-header-left">
+                <div class="dpm-file-icon" id="dpmFileIcon"></div>
+                <div class="dpm-file-info">
+                    <div class="dpm-file-name" id="dpmFileName">Document Preview</div>
+                    <div class="dpm-file-meta" id="dpmFileMeta">Preview</div>
+                </div>
+            </div>
+            <div class="dpm-header-actions">
+                <button class="dpm-btn-download" id="dpmDownloadBtn" title="Download this file">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>Download</span>
+                </button>
+                <button class="dpm-btn-close" id="dpmCloseBtn" title="Close preview" aria-label="Close preview">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Modal Content Body -->
+        <div class="dpm-body" id="dpmBody">
+            <div class="dpm-loading" id="dpmLoading" style="display:none;">
+                <span class="dpm-spinner"></span>
+                <span id="dpmLoadingText">Loading preview...</span>
+            </div>
+            <div class="dpm-content" id="dpmContent"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════ MODEL DETAILS MODAL ════════════════════ -->
+<div class="tm-modal" id="modelDetailsModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="tmModalTitle">
+    <div class="tm-modal-backdrop" id="tmModalBackdrop"></div>
+    <div class="tm-modal-dialog">
+        <div class="tm-modal-header">
+            <div class="tm-modal-title-wrap">
+                <div class="tm-modal-badge" id="tmModalBadge">HUGGING FACE MODEL</div>
+                <h3 class="tm-modal-title" id="tmModalTitle">Model Details</h3>
+                <span class="tm-modal-author" id="tmModalAuthor">by Provider</span>
+            </div>
+            <button class="tm-modal-close" id="tmModalCloseBtn" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="tm-modal-body" id="tmModalBody">
+            <!-- Injected dynamically by JS -->
+        </div>
+        <div class="tm-modal-footer">
+            <a href="#" target="_blank" rel="noopener noreferrer" class="tm-modal-btn-hf" id="tmModalHfBtn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                <span>View on Hugging Face ↗</span>
+            </a>
+            <button class="tm-modal-btn-close" id="tmModalCloseFooterBtn">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/three.min.js" onerror="this.onerror=null;this.src='three.min.js'"></script>
+<script src="/static/artifact_graph.js" onerror="this.onerror=null;this.src='artifact_graph.js'"></script>
+<script src="/static/app.js" onerror="this.onerror=null;this.src='app.js'"></script>
 </body>
 </html>

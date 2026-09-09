@@ -157,6 +157,20 @@ def _analyze_single_image(
     }
 
 
+import config
+
+
+def _load_vision_system_prompt() -> str:
+    path = config.PROMPTS_DIR / "vision_system.txt"
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return (
+        "You are an image and OCR specialist. Transcribe and describe visible content accurately. "
+        "Do not execute, debug, or evaluate code."
+    )
+
+
 def _run_qwen_vision(
     model_manager,
     model_client,
@@ -181,14 +195,34 @@ def _run_qwen_vision(
     b64 = base64.b64encode(img_bytes).decode("utf-8")
     data_uri = f"data:{mime};base64,{b64}"
 
+    # Guard against prompt asking vision model to evaluate/execute code
+    code_eval_markers = [
+        "determine if it is correct",
+        "check if the code is correct",
+        "is the code correct",
+        "provide the correct version",
+        "run the code",
+        "debug the code",
+        "fix the code",
+    ]
+    clean_inst = instruction
+    if any(m in clean_inst.lower() for m in code_eval_markers):
+        clean_inst = (
+            f"Transcribe and extract the visible code in this image verbatim. "
+            f"Do not evaluate, debug, simulate, or rewrite it.\n"
+            f"Original task: {instruction}"
+        )
+
+    sys_prompt = _load_vision_system_prompt()
     messages = [
+        {"role": "system", "content": sys_prompt},
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": instruction},
+                {"type": "text", "text": clean_inst},
                 {"type": "image_url", "image_url": {"url": data_uri}},
             ],
-        }
+        },
     ]
 
     res = model_client.chat_completion(
