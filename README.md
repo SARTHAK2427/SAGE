@@ -119,6 +119,10 @@ SAGE/
 
 ## Setup & Running
 
+For Flash Mode setup, local/remote GPU recipes, model deployment, API keys,
+memory behavior, and troubleshooting, see
+[`notes/FLASH_MODE_USER_MANUAL.md`](notes/FLASH_MODE_USER_MANUAL.md).
+
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt

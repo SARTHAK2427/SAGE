@@ -197,3 +197,19 @@ def is_remote_backend() -> bool:
     """Return True if SAGE is configured to offload inference to the remote GPU worker."""
     return SAGE_MODEL_BACKEND == "remote"
 
+
+# ── Flash Mode Runtime ────────────────────────────────────────────────────────
+# Flash uses independent ports and never takes ownership of the legacy 8080
+# model-manager port. Remote URLs and keys are supplied by the UI and live only
+# in process memory; they are deliberately absent from environment defaults.
+FLASH_DEFAULT_ENABLED = os.environ.get("SAGE_FLASH_DEFAULT", "1").strip().lower() not in {"0", "false", "no"}
+FLASH_GEMMA_PORT = int(os.environ.get("SAGE_FLASH_GEMMA_PORT", "8090"))
+FLASH_QWEN_PORT = int(os.environ.get("SAGE_FLASH_QWEN_PORT", "8091"))
+FLASH_MEMORY_PORT = int(os.environ.get("SAGE_FLASH_MEMORY_PORT", "8092"))
+FLASH_MODEL_START_TIMEOUT = float(os.environ.get("SAGE_FLASH_START_TIMEOUT", "120"))
+FLASH_REQUEST_TIMEOUT = float(os.environ.get("SAGE_FLASH_REQUEST_TIMEOUT", "300"))
+FLASH_DEPLOY_TIMEOUT = float(os.environ.get("SAGE_FLASH_DEPLOY_TIMEOUT", "900"))
+FLASH_VRAM_RESERVE_GIB = float(os.environ.get("SAGE_FLASH_VRAM_RESERVE_GIB", "0.75"))
+FLASH_MEMORY_CPU_THREADS = int(os.environ.get("SAGE_FLASH_MEMORY_CPU_THREADS", "4"))
+FLASH_MEMORY_QUEUE_SIZE = int(os.environ.get("SAGE_FLASH_MEMORY_QUEUE_SIZE", "32"))
+

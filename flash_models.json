@@ -1,0 +1,36 @@
+{
+  "gemma": {
+    "display_name": "Gemma Flash Controller",
+    "repo": "unsloth/gemma-4-E2B-it-GGUF",
+    "file": "gemma-4-E2B-it-IQ4_NL.gguf",
+    "mmproj": null,
+    "context": 8192,
+    "temperature": 0.2,
+    "max_tokens": 4096,
+    "reasoning": "on",
+    "estimated_vram_gib": 3.6
+  },
+  "qwen": {
+    "display_name": "Qwen3-VL Flash Vision",
+    "repo": "unsloth/Qwen3-VL-2B-Instruct-GGUF",
+    "file": "Qwen3-VL-2B-Instruct-IQ4_NL.gguf",
+    "mmproj": "mmproj-F16.gguf",
+    "context": 4096,
+    "temperature": 0.05,
+    "max_tokens": 2048,
+    "reasoning": "off",
+    "estimated_vram_gib": 2.2
+  },
+  "memory": {
+    "display_name": "SAGE Memory Compressor 2B",
+    "repo": "unsloth/Qwen3.5-2B-MTP-GGUF",
+    "file": "Qwen3.5-2B-IQ4_NL.gguf",
+    "mmproj": null,
+    "context": 8192,
+    "temperature": 0.1,
+    "max_tokens": 768,
+    "reasoning": "off",
+    "estimated_vram_gib": 1.8,
+    "estimated_ram_gib": 3.0
+  }
+}
