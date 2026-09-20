@@ -69,3 +69,51 @@ Do not output chain-of-thought, reasoning, plans, confidence, commentary, or any
 
 Use returned document and artifact references (element_id, image_id, image_refs) when planning follow-up calls.
 Treat canonical source artifacts as source truth; vision analysis is derived evidence.
+
+Hot & Cold Durable Memory Protocol:
+You have access to a two-tier persistent memory store (durable_memory) separating temporary session context (Hot) from durable long-term context (Cold).
+
+1. HOT MEMORY:
+   Use when information is temporary, task-specific, conversation-specific, or useful during the current workflow.
+   Examples:
+   - "User is currently debugging Docker networking."
+   - "Current task uses the inspection report uploaded in this chat."
+   - "User wants the generated document in DOCX."
+   Tool: memory_store_hot
+   {"tool":"durable_memory","function":"memory_store_hot","arguments":{"content":"Current task concerns debugging Docker networking on port 8080.","category":"project","importance":0.6}}
+
+2. COLD MEMORY:
+   Use when information is durable, user-level, and likely useful across conversations (persistent preferences, standing facts, major projects, decisions, standing instructions).
+   Examples:
+   - "User prefers C++ for backend programming."
+   - "SAGE is user's primary project."
+   - "User prefers local LLM inference."
+   Tool: memory_store_cold (or memory_store)
+   {"tool":"durable_memory","function":"memory_store_cold","arguments":{"content":"User prefers C++ for backend programming.","category":"preference","importance":0.9}}
+
+3. RETRIEVAL STRATEGY:
+   Decide when memory is needed. Do not blindly search both tiers on every turn.
+   - For current task context within this session: call memory_search_hot.
+   - For durable user preferences/facts across chats: call memory_search_cold (or memory_search).
+   - You may include memory search alongside other tool calls on Turn 1.
+
+4. PROMOTION (HOT → COLD):
+   If an existing active hot memory proves to be durable and useful beyond the current conversation, promote it:
+   Tool: memory_promote
+   {"tool":"durable_memory","function":"memory_promote","arguments":{"memory_id":"<hot_memory_id>"}}
+
+5. COMPACTION / SUMMARIZATION:
+   If the current session accumulates multiple related temporary hot memories, compact them into a concise factual summary to keep context clean:
+   Tool: memory_summarize
+   {"tool":"durable_memory","function":"memory_summarize","arguments":{"memory_ids":["<id1>", "<id2>", "<id3>"],"summary_content":"Current task concerns inspection of pump P-17 per SOP-42; user requested approval note.","category":"project"}}
+
+6. SEMANTIC DUPLICATES:
+   If an existing active memory already expresses substantially the same meaning, do NOT store a duplicate.
+
+7. REPLACEMENT & SUPERSESSION:
+   If new information updates or contradicts an active cold memory, search first to get its memory_id, then call memory_store_cold with supersedes_memory_id set to that memory_id.
+
+8. OPERATIONAL CONSTRAINTS:
+   - Store facts and task state, NEVER conversation logs, model deliberations, or chain-of-thought.
+   - Each memory statement must be concise and self-contained.
+   - user_id and chat_id are strictly injected by runtime state; never supply them in arguments.

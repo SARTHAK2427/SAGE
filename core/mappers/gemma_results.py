@@ -33,7 +33,7 @@ Strict strip rules (never included in Gemma-facing output):
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -683,6 +683,70 @@ def map_general_knowledge_result(data: dict) -> dict:
     return {"answer": str(answer)}
 
 
+def map_memory_search_result(data: dict) -> dict:
+    """Project durable_memory/memory_search socket → Gemma-facing clean memories list."""
+    memories = data.get("memories", [])
+    sanitized_mems = [strip_internal_fields(m) for m in memories]
+    return {
+        "memories": sanitized_mems,
+        "returned": len(sanitized_mems),
+    }
+
+
+def _sanitize_memory_dict(mem: Any) -> Optional[dict]:
+    """Ensure internal database keys (user_id, source_msg_id, etc.) are stripped for Gemma."""
+    if not isinstance(mem, dict):
+        return None
+    tier_val = str(mem.get("memory_tier") or mem.get("tier") or "cold")
+    res = {
+        "memory_id": str(mem.get("memory_id", "")),
+        "content": str(mem.get("content", "")),
+        "category": str(mem.get("category", "")),
+        "importance": float(mem.get("importance", 0.5)),
+        "confidence": float(mem.get("confidence", 1.0)),
+        "status": str(mem.get("status", "active")),
+        "memory_tier": tier_val,
+        "tier": tier_val,
+    }
+    if mem.get("supersedes_memory_id"):
+        res["supersedes_memory_id"] = str(mem["supersedes_memory_id"])
+    if mem.get("source_chat_id"):
+        res["source_chat_id"] = str(mem["source_chat_id"])
+    return res
+
+
+def map_memory_get_result(data: dict) -> dict:
+    """Project durable_memory/memory_get socket → Gemma-facing clean memory object."""
+    memory = data.get("memory")
+    return {
+        "memory": _sanitize_memory_dict(strip_internal_fields(memory)) if memory else None,
+    }
+
+
+def map_memory_store_result(data: dict) -> dict:
+    """Project durable_memory/memory_store socket → Gemma-facing clean memory object."""
+    memory = data.get("memory")
+    return {
+        "memory": _sanitize_memory_dict(strip_internal_fields(memory)) if memory else None,
+    }
+
+
+def map_memory_promote_result(data: dict) -> dict:
+    """Project durable_memory/memory_promote socket → Gemma-facing clean memory object."""
+    memory = data.get("memory")
+    return {
+        "memory": _sanitize_memory_dict(strip_internal_fields(memory)) if memory else None,
+    }
+
+
+def map_memory_summarize_result(data: dict) -> dict:
+    """Project durable_memory/memory_summarize socket → Gemma-facing clean summary memory object."""
+    memory = data.get("memory")
+    return {
+        "memory": _sanitize_memory_dict(strip_internal_fields(memory)) if memory else None,
+    }
+
+
 # ── Canonical Function Mappers Registry ───────────────────────────────────────
 
 CANONICAL_GEMMA_MAPPERS: dict[tuple[str, str], Any] = {
@@ -694,4 +758,22 @@ CANONICAL_GEMMA_MAPPERS: dict[tuple[str, str], Any] = {
     ("code_specialist", "solve_code_task"): map_coder_result,
     ("math", "calculate"): map_math_result,
     ("general_knowledge", "answer_query"): map_general_knowledge_result,
+    ("durable_memory", "memory_search"): map_memory_search_result,
+    ("durable_memory", "memory_get"): map_memory_get_result,
+    ("durable_memory", "memory_store"): map_memory_store_result,
+    ("durable_memory", "memory_search_hot"): map_memory_search_result,
+    ("durable_memory", "memory_search_cold"): map_memory_search_result,
+    ("durable_memory", "memory_store_hot"): map_memory_store_result,
+    ("durable_memory", "memory_store_cold"): map_memory_store_result,
+    ("durable_memory", "memory_promote"): map_memory_promote_result,
+    ("durable_memory", "memory_summarize"): map_memory_summarize_result,
+    ("memory", "memory_search"): map_memory_search_result,
+    ("memory", "memory_get"): map_memory_get_result,
+    ("memory", "memory_store"): map_memory_store_result,
+    ("memory", "memory_search_hot"): map_memory_search_result,
+    ("memory", "memory_search_cold"): map_memory_search_result,
+    ("memory", "memory_store_hot"): map_memory_store_result,
+    ("memory", "memory_store_cold"): map_memory_store_result,
+    ("memory", "memory_promote"): map_memory_promote_result,
+    ("memory", "memory_summarize"): map_memory_summarize_result,
 }

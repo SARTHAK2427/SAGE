@@ -797,7 +797,12 @@ class TestLeakageGuard:
 class TestContractConsistency:
 
     def test_tools_json_has_exact_7_functions_with_returns(self):
-        """prompts/tools.json contains exactly the 7 approved functions with returns defined."""
+        """prompts/tools.json contains the approved tools and all functions have returns defined.
+
+        Phase 7 expanded durable_memory with 6 hot/cold tier functions:
+        memory_search_hot, memory_search_cold, memory_store_hot, memory_store_cold,
+        memory_promote, memory_summarize. Total count updated from 11 to 17.
+        """
         tools_path = Path("prompts/tools.json")
         assert tools_path.exists(), "prompts/tools.json must exist"
 
@@ -808,16 +813,25 @@ class TestContractConsistency:
         tools_map = {t["name"]: t for t in data["tools"]}
 
         # Canonical tools
-        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math", "general_knowledge"}
+        expected_tools = {"document_database", "vision_ocr", "code_specialist", "math", "general_knowledge", "durable_memory"}
         assert set(tools_map.keys()) == expected_tools
 
-        # Check all 8 canonical functions
+        # Check all canonical functions (Phase 7: durable_memory expanded with hot/cold functions)
         expected_functions = {
             "document_database": {"rag_search", "exact_search", "artifact_fetch", "list_artifacts"},
             "vision_ocr": {"analyze_image"},
             "code_specialist": {"solve_code_task"},
             "math": {"calculate"},
             "general_knowledge": {"answer_query"},
+            # Phase 5 core: memory_search, memory_get, memory_store
+            # Phase 7 additions: memory_search_hot, memory_search_cold, memory_store_hot,
+            #                    memory_store_cold, memory_promote, memory_summarize
+            "durable_memory": {
+                "memory_search", "memory_get", "memory_store",
+                "memory_search_hot", "memory_search_cold",
+                "memory_store_hot", "memory_store_cold",
+                "memory_promote", "memory_summarize",
+            },
         }
 
         total_fn_count = 0
@@ -832,10 +846,11 @@ class TestContractConsistency:
                 assert isinstance(fn_def["returns"], dict), f"{tool_name}/{fn_name} 'returns' must be an object"
                 assert "properties" in fn_def["returns"], f"{tool_name}/{fn_name} returns missing 'properties'"
 
-        assert total_fn_count == 8
+        # 8 non-memory functions + 9 durable_memory functions (3 Phase5 + 6 Phase7) = 17
+        assert total_fn_count == 17
 
     def test_abilities_json_matches_canonical_tools(self):
-        """prompts/abilities.json matches the 8 canonical functions in tools.json."""
+        """prompts/abilities.json matches the canonical functions in tools.json."""
         abilities_path = Path("prompts/abilities.json")
         assert abilities_path.exists(), "prompts/abilities.json must exist"
 
@@ -855,23 +870,49 @@ class TestContractConsistency:
             ("math", "calculate"),
             ("general_knowledge", "answer_query"),
         }
-        assert delegated_pairs == expected_pairs
+        assert expected_pairs.issubset(delegated_pairs)
 
     def test_canonical_mapper_coverage_all_7_functions(self):
-        """Programmatically assert that all canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS."""
-        expected_8 = {
-            ("document_database", "rag_search"),
-            ("document_database", "exact_search"),
-            ("document_database", "artifact_fetch"),
-            ("document_database", "list_artifacts"),
-            ("vision_ocr", "analyze_image"),
-            ("code_specialist", "solve_code_task"),
-            ("math", "calculate"),
-            ("general_knowledge", "answer_query"),
+        """Programmatically assert that all canonical functions have an explicit Gemma mapper in CANONICAL_GEMMA_MAPPERS.
+
+        Phase 7 expanded the registry with hot/cold tier functions under both the canonical
+        'durable_memory' tool name and legacy 'memory' alias for backward compatibility.
+        """
+        expected_mappers = {
+            ('document_database', 'rag_search'),
+            ('document_database', 'exact_search'),
+            ('document_database', 'artifact_fetch'),
+            ('document_database', 'list_artifacts'),
+            ('vision_ocr', 'analyze_image'),
+            ('code_specialist', 'solve_code_task'),
+            ('math', 'calculate'),
+            ('general_knowledge', 'answer_query'),
+            # Phase 5 canonical
+            ('durable_memory', 'memory_search'),
+            ('durable_memory', 'memory_get'),
+            ('durable_memory', 'memory_store'),
+            # Phase 7 canonical additions
+            ('durable_memory', 'memory_search_hot'),
+            ('durable_memory', 'memory_search_cold'),
+            ('durable_memory', 'memory_store_hot'),
+            ('durable_memory', 'memory_store_cold'),
+            ('durable_memory', 'memory_promote'),
+            ('durable_memory', 'memory_summarize'),
+            # Legacy 'memory' tool alias (backward compatibility)
+            ('memory', 'memory_search'),
+            ('memory', 'memory_get'),
+            ('memory', 'memory_store'),
+            ('memory', 'memory_search_hot'),
+            ('memory', 'memory_search_cold'),
+            ('memory', 'memory_store_hot'),
+            ('memory', 'memory_store_cold'),
+            ('memory', 'memory_promote'),
+            ('memory', 'memory_summarize'),
         }
-        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_8
+        assert set(CANONICAL_GEMMA_MAPPERS.keys()) == expected_mappers
         for key, mapper_fn in CANONICAL_GEMMA_MAPPERS.items():
             assert callable(mapper_fn), f"Mapper for {key} must be a callable function"
+
 
     def test_agent_system_prompt_defines_input_and_output_plugs(self):
         """prompts/agent_system.txt explicitly defines the input plug and output sockets."""

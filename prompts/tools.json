@@ -230,6 +230,265 @@
           }
         }
       ]
+    },
+    {
+      "name": "durable_memory",
+      "description": "Search and retrieve stored durable user facts, preferences, project details, decisions, and instructions across conversations.",
+      "functions": [
+        {
+          "name": "memory_search",
+          "description": "Search active durable memories filtered by category.",
+          "arguments": {
+            "query":    {"type": ["string", "null"], "required": false},
+            "category": {"type": ["string", "null"], "required": false, "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "limit":    {"type": "integer",          "required": false}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Filtered active durable memories.",
+            "properties": {
+              "memories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "memory_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                    "importance": {"type": "number"},
+                    "confidence": {"type": "number"},
+                    "source_chat_id": {"type": ["string", "null"]},
+                    "created_at": {"type": "string"},
+                    "updated_at": {"type": "string"}
+                  }
+                }
+              },
+              "returned": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "memory_get",
+          "description": "Retrieve a specific active durable memory by its memory_id.",
+          "arguments": {
+            "memory_id": {"type": "string", "required": true}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Retrieved memory object or null.",
+            "properties": {
+              "memory": {"type": ["object", "null"]}
+            }
+          }
+        },
+        {
+          "name": "memory_store",
+          "description": "Store a durable fact, preference, project detail, decision, or instruction that should persist across conversations, or supersede/replace an existing obsolete memory.",
+          "arguments": {
+            "content":              {"type": "string",  "required": true,  "description": "The fact, preference, decision, or instruction to store."},
+            "category":             {"type": "string",  "required": true,  "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "importance":           {"type": "number",  "required": false, "description": "Subjective importance score between 0.0 and 1.0 (default 0.5)"},
+            "confidence":           {"type": "number",  "required": false, "description": "Confidence score between 0.0 and 1.0 (default 1.0)"},
+            "supersedes_memory_id": {"type": ["string", "null"], "required": false, "description": "Optional memory_id of an existing active memory that this new statement replaces or supersedes."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Stored durable memory record.",
+            "properties": {
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "category": {"type": "string"},
+                  "importance": {"type": "number"},
+                  "confidence": {"type": "number"},
+                  "status": {"type": "string"},
+                  "supersedes_memory_id": {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "memory_search_hot",
+          "description": "Search active session-scoped hot memories for the current conversation and task context.",
+          "arguments": {
+            "query":    {"type": ["string", "null"], "required": false, "description": "Semantic query describing the current task context to retrieve."},
+            "category": {"type": ["string", "null"], "required": false, "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "limit":    {"type": "integer",          "required": false, "description": "Max results to return (1-20, default 5)."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Filtered active hot memories for the current session.",
+            "properties": {
+              "memories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "memory_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                    "importance": {"type": "number"},
+                    "confidence": {"type": "number"},
+                    "memory_tier": {"type": "string"},
+                    "source_chat_id": {"type": ["string", "null"]},
+                    "created_at": {"type": "string"},
+                    "updated_at": {"type": "string"}
+                  }
+                }
+              },
+              "returned": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "memory_search_cold",
+          "description": "Search active durable cold memories for the user across all conversations.",
+          "arguments": {
+            "query":    {"type": ["string", "null"], "required": false, "description": "Semantic query describing durable preferences or facts to retrieve."},
+            "category": {"type": ["string", "null"], "required": false, "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "limit":    {"type": "integer",          "required": false, "description": "Max results to return (1-20, default 5)."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Filtered active durable cold memories.",
+            "properties": {
+              "memories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "memory_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                    "importance": {"type": "number"},
+                    "confidence": {"type": "number"},
+                    "memory_tier": {"type": "string"},
+                    "source_chat_id": {"type": ["string", "null"]},
+                    "created_at": {"type": "string"},
+                    "updated_at": {"type": "string"}
+                  }
+                }
+              },
+              "returned": {"type": "integer"}
+            }
+          }
+        },
+        {
+          "name": "memory_store_hot",
+          "description": "Store a temporary, session-scoped hot memory for the current conversation and task context.",
+          "arguments": {
+            "content":    {"type": "string",  "required": true,  "description": "The contextual or temporary task fact to store."},
+            "category":   {"type": "string",  "required": true,  "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "importance": {"type": "number",  "required": false, "description": "Subjective importance score between 0.0 and 1.0 (default 0.5)"},
+            "confidence": {"type": "number",  "required": false, "description": "Confidence score between 0.0 and 1.0 (default 1.0)"}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Stored hot memory record.",
+            "properties": {
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "category": {"type": "string"},
+                  "importance": {"type": "number"},
+                  "confidence": {"type": "number"},
+                  "status": {"type": "string"},
+                  "memory_tier": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "memory_store_cold",
+          "description": "Store a durable cold memory fact, preference, project detail, decision, or instruction that persists across conversations.",
+          "arguments": {
+            "content":              {"type": "string",  "required": true,  "description": "The durable fact or preference to store."},
+            "category":             {"type": "string",  "required": true,  "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "importance":           {"type": "number",  "required": false, "description": "Subjective importance score between 0.0 and 1.0 (default 0.5)"},
+            "confidence":           {"type": "number",  "required": false, "description": "Confidence score between 0.0 and 1.0 (default 1.0)"},
+            "supersedes_memory_id": {"type": ["string", "null"], "required": false, "description": "Optional memory_id of an existing active cold memory that this replaces."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Stored cold memory record.",
+            "properties": {
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "category": {"type": "string"},
+                  "importance": {"type": "number"},
+                  "confidence": {"type": "number"},
+                  "status": {"type": "string"},
+                  "memory_tier": {"type": "string"},
+                  "supersedes_memory_id": {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "memory_promote",
+          "description": "Promote a session-scoped hot memory to a durable cold memory if it represents long-term user context.",
+          "arguments": {
+            "memory_id": {"type": "string", "required": true, "description": "The memory_id of the active hot memory to promote."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Promoted durable cold memory record.",
+            "properties": {
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "category": {"type": "string"},
+                  "importance": {"type": "number"},
+                  "confidence": {"type": "number"},
+                  "status": {"type": "string"},
+                  "memory_tier": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "memory_summarize",
+          "description": "Compact multiple related active hot memories from the current session into a single concise hot summary memory.",
+          "arguments": {
+            "memory_ids":       {"type": "array", "items": {"type": "string"}, "required": true, "description": "List of active hot memory IDs to compact."},
+            "summary_content":  {"type": "string", "required": true, "description": "Concise factual summary combining the source hot memories."},
+            "category":         {"type": "string", "required": false, "enum": ["fact", "preference", "project", "decision", "instruction"], "description": "Category for the summary memory (default 'fact')."},
+            "importance":       {"type": "number", "required": false, "description": "Importance score between 0.0 and 1.0 (default 0.5)."},
+            "confidence":       {"type": "number", "required": false, "description": "Confidence score between 0.0 and 1.0 (default 1.0)."}
+          },
+          "returns": {
+            "type": "object",
+            "description": "Resulting active hot summary memory record.",
+            "properties": {
+              "memory": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "category": {"type": "string"},
+                  "importance": {"type": "number"},
+                  "confidence": {"type": "number"},
+                  "status": {"type": "string"},
+                  "memory_tier": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ]
 }

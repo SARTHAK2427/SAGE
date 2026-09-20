@@ -65,6 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const dpmBody         = document.getElementById('dpmBody');
     const dpmLoading      = document.getElementById('dpmLoading');
     const dpmLoadingText  = document.getElementById('dpmLoadingText');
+
+    // Chat continuity state (Phase 1)
+    let currentChatId = null;
     const dpmContent      = document.getElementById('dpmContent');
 
     let currentPreviewFile = null;
@@ -1733,6 +1736,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showComposerNotice('Chat session cleared.');
     });
     function resetChat() {
+        currentChatId = null;
         chatMessages.innerHTML = '';
         chatActive = false;
         flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
@@ -2670,7 +2674,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData();
         formData.append('objective', text || 'Analyze the attached files.');
-        formData.append('session_id', flashSessionId);
+        if (activeChatMode === 'flash') {
+            formData.append('session_id', flashSessionId);
+        } else if (currentChatId) {
+            formData.append('chat_id', currentChatId);
+        }
         const fileNames = attachedFiles.map(f => f.name);
         const hasFiles = attachedFiles.length > 0;
         attachedFiles.forEach(f => formData.append('files', f));
@@ -2765,6 +2773,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 signal: currentAbortController.signal
             });
             const data = await res.json();
+            if (data && data.session_id) {
+                flashSessionId = data.session_id;
+            }
+            if (data && data.chat_id) {
+                currentChatId = data.chat_id;
+            }
             if (thinking) thinking.remove();
             clearExecTimers();
             hideCardStatus();

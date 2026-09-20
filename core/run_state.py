@@ -68,6 +68,8 @@ class RunState:
     """
     run_id: str = field(default_factory=lambda: f"run_{uuid.uuid4().hex[:12]}")
     request_id: str = ""
+    chat_id: str = ""
+    user_id: str = ""
     loop_index: int = 0
     user_text: str = ""
 

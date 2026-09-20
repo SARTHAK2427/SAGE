@@ -18,14 +18,18 @@ _SAGE_ROOT = Path(__file__).resolve().parent.parent
 if str(_SAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SAGE_ROOT))
 
-# Set mock mode at collection time so module-level imports run fast
+# Set mock mode and SQLite memory DB at collection time so imports run fast
 os.environ["SAGE_MOCK_MODE"] = "1"
+if "SAGE_MEMORY_DB" not in os.environ:
+    os.environ["SAGE_MEMORY_DB"] = "sqlite"
 
 
 @pytest.fixture(autouse=True)
 def _mock_mode_env(monkeypatch):
-    """Ensure all tests run with SAGE_MOCK_MODE=1."""
+    """Ensure all tests run with SAGE_MOCK_MODE=1 and SAGE_MEMORY_DB=sqlite unless overridden."""
     monkeypatch.setenv("SAGE_MOCK_MODE", "1")
+    if "SAGE_MEMORY_DB" not in os.environ:
+        monkeypatch.setenv("SAGE_MEMORY_DB", "sqlite")
 
 
 @pytest.fixture()

@@ -35,6 +35,18 @@ if _env_file.is_file():
 # Gemma Context Window
 GEMMA_CONTEXT = int(os.environ.get("GEMMA_CONTEXT", "16384"))
 
+# Single-User Identity Namespace & Memory DB Config
+DEFAULT_USER_ID = os.environ.get("SAGE_DEFAULT_USER_ID", "local_user")
+SAGE_MEMORY_DB = os.environ.get("SAGE_MEMORY_DB", "postgres").lower().strip()
+SAGE_MEMORY_COLLECTION = os.environ.get("SAGE_MEMORY_COLLECTION", "sage_memory")
+SAGE_MEMORY_HOT_COLLECTION = os.environ.get("SAGE_MEMORY_HOT_COLLECTION", "sage_memory_hot")
+SAGE_MEMORY_COLD_COLLECTION = os.environ.get("SAGE_MEMORY_COLD_COLLECTION", "sage_memory_cold")
+SAGE_DATABASE_URL = (
+    os.environ.get("SAGE_DATABASE_URL")
+    or os.environ.get("DATABASE_URL")
+    or ""
+)
+
 # Ensure directories exist
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 (TEMP_DIR / "logs").mkdir(parents=True, exist_ok=True)
@@ -125,6 +137,22 @@ LLAMA_BASE_URL = f"http://{SERVER_HOST}:{LLAMA_PORT}"
 MAX_AGENT_LOOPS = 8
 MODEL_START_TIMEOUT = 90  # Seconds to wait for /health
 REQUEST_TIMEOUT = 180.0   # HTTP timeout for inference calls
+
+# Phase 8: bounded automatic context injected before Gemma's first turn.
+# These limits apply only to persisted chat context and semantic memories; the
+# current user request is always included in full.
+SAGE_CONTEXT_MEMORY_BUDGET_TOKENS = int(
+    os.environ.get("SAGE_CONTEXT_MEMORY_BUDGET_TOKENS", "1200")
+)
+SAGE_GLOBAL_MEMORY_BUDGET_TOKENS = int(
+    os.environ.get("SAGE_GLOBAL_MEMORY_BUDGET_TOKENS", "600")
+)
+SAGE_GLOBAL_MEMORY_MAX_ITEMS = int(
+    os.environ.get("SAGE_GLOBAL_MEMORY_MAX_ITEMS", "8")
+)
+SAGE_RECENT_CHAT_MAX_MESSAGES = int(
+    os.environ.get("SAGE_RECENT_CHAT_MAX_MESSAGES", "5")
+)
 
 # ── Code Execution Sandbox ────────────────────────────────────────────────────
 # Docker is the ONLY backend. No subprocess/local-execution fallback.

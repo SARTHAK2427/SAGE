@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Callable
@@ -57,6 +58,65 @@ console = Console(highlight=False, legacy_windows=False)
 
 def _is_mock_mode() -> bool:
     return os.environ.get("SAGE_MOCK_MODE", "0") == "1"
+
+
+def _estimate_context_tokens(text: str) -> int:
+    """Deterministic, dependency-free context estimate used for Phase 8 limits.
+
+    SAGE has no Gemma tokenizer utility available before model invocation.  This
+    deliberately conservative whitespace-token estimate is only used to bound
+    injected persisted context; it never trims the live user request.
+    """
+    return len(re.findall(r"\S+", text or ""))
+
+
+def _bounded_recent_chat_context(sage_memory: Any, chat_id: str, token_budget: int) -> tuple[str, int]:
+    """Keep the newest complete chat messages that fit the supplied budget."""
+    if not chat_id or token_budget <= 0:
+        return "", 0
+
+    messages = sage_memory.get_messages(chat_id)
+    selected_reversed: List[str] = []
+    used_tokens = _estimate_context_tokens("RECENT CONVERSATION:")
+    for message in reversed(messages[-max(1, config.SAGE_RECENT_CHAT_MAX_MESSAGES):]):
+        line = f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+        line_tokens = _estimate_context_tokens(line)
+        if used_tokens + line_tokens > token_budget:
+            continue
+        selected_reversed.append(line)
+        used_tokens += line_tokens
+
+    if not selected_reversed:
+        return "", 0
+    return "RECENT CONVERSATION:\n" + "\n".join(reversed(selected_reversed)), used_tokens
+
+
+def _bounded_global_memory_context(memories: List[Dict[str, Any]], token_budget: int) -> tuple[str, List[str], int]:
+    """Format complete, highest-ranked cold memories without leaking internals."""
+    if token_budget <= 0:
+        return "", [], 0
+
+    lines: List[str] = []
+    memory_ids: List[str] = []
+    used_tokens = _estimate_context_tokens("PERSISTENT MEMORY:")
+    for memory in memories:
+        content = str(memory.get("content") or "").strip()
+        memory_id = str(memory.get("memory_id") or "")
+        if not content or not memory_id:
+            continue
+        category = str(memory.get("category") or "fact")
+        line = f"- [{category}] {content}"
+        line_tokens = _estimate_context_tokens(line)
+        # Preserve complete semantic records rather than slicing their text.
+        if used_tokens + line_tokens > token_budget:
+            continue
+        lines.append(line)
+        memory_ids.append(memory_id)
+        used_tokens += line_tokens
+
+    if not lines:
+        return "", [], 0
+    return "PERSISTENT MEMORY:\n" + "\n".join(lines), memory_ids, used_tokens
 
 
 class Orchestrator:
@@ -505,6 +565,79 @@ class Orchestrator:
                 call_index=call_index, mapper_fn=map_general_knowledge_result,
             )
 
+        # ── 4c. durable_memory group (Phase 3, Phase 5, Phase 7) ───────────
+        elif tool_name in (
+            "durable_memory", "memory", "memory_search", "memory_get", "memory_store",
+            "memory_search_hot", "memory_search_cold", "memory_store_hot", "memory_store_cold",
+            "memory_promote", "memory_summarize"
+        ):
+            if func_name:
+                resolved_fn = func_name
+            elif tool_name in (
+                "memory_get", "memory_store", "memory_search_hot", "memory_search_cold",
+                "memory_store_hot", "memory_store_cold", "memory_promote", "memory_summarize"
+            ):
+                resolved_fn = tool_name
+            else:
+                resolved_fn = "memory_search"
+
+            user_id = getattr(run_state, "user_id", None) or config.DEFAULT_USER_ID
+            chat_id = getattr(run_state, "chat_id", None)
+
+            disp_args = dict(arguments)
+            disp_args["user_id"] = user_id
+            if resolved_fn in (
+                "memory_store", "memory_store_hot", "memory_store_cold",
+                "memory_search_hot", "memory_summarize",
+            ):
+                disp_args["chat_id"] = chat_id
+
+            console.print(Panel(
+                f"[bold]Tool:[/bold] {tool_name}\n[bold]Function:[/bold] {resolved_fn}\n[bold]Args:[/bold] {str(disp_args)[:200]}",
+                title="[bold cyan]EXECUTING TOOL: DURABLE MEMORY[/bold cyan]",
+                border_style="cyan"
+            ))
+
+            disp_res: ToolResult = self.registry.dispatch(
+                tool_name, resolved_fn, **disp_args
+            )
+            rich_socket = disp_res.result if isinstance(disp_res.result, dict) else {"status": disp_res.status}
+            if disp_res.status not in ("success", "partial"):
+                rich_socket["status"] = disp_res.status
+                rich_socket["error"] = disp_res.error
+
+            trace.append({
+                "actor": "durable_memory",
+                "action": resolved_fn,
+                "status": disp_res.status,
+                "duration_ms": disp_res.duration_ms,
+                "input": disp_args,
+                "output": rich_socket,
+            })
+
+            from core.mappers.gemma_results import (
+                map_memory_search_result,
+                map_memory_get_result,
+                map_memory_store_result,
+                map_memory_promote_result,
+                map_memory_summarize_result,
+            )
+            if resolved_fn == "memory_get":
+                mapper_fn = map_memory_get_result
+            elif resolved_fn in ("memory_store", "memory_store_hot", "memory_store_cold"):
+                mapper_fn = map_memory_store_result
+            elif resolved_fn == "memory_promote":
+                mapper_fn = map_memory_promote_result
+            elif resolved_fn == "memory_summarize":
+                mapper_fn = map_memory_summarize_result
+            else:
+                mapper_fn = map_memory_search_result
+
+            return map_tool_result_for_gemma(
+                "durable_memory", resolved_fn, rich_socket,
+                call_index=call_index, mapper_fn=mapper_fn,
+            )
+
         # ── 5. Legacy document_analyzer bridge (→ document_database/rag_search)
         elif tool_name == "document_analyzer":
             doc_ids = run_state.list_document_ids() or None
@@ -673,6 +806,8 @@ class Orchestrator:
         if run_state is None:
             run_state = RunState(
                 request_id=f"req_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+                chat_id=f"chat_{uuid.uuid4().hex[:12]}",
+                user_id=config.DEFAULT_USER_ID,
                 user_text=user_objective,
             )
             for att in attachments_manifest:
@@ -682,6 +817,11 @@ class Orchestrator:
                     file_type=att.get("type"),
                     source_name=att.get("name"),
                 )
+        else:
+            if not getattr(run_state, "chat_id", None):
+                run_state.chat_id = f"chat_{uuid.uuid4().hex[:12]}"
+            if not getattr(run_state, "user_id", None):
+                run_state.user_id = config.DEFAULT_USER_ID
 
         console.print("\n" + "="*70, style="bold cyan")
         console.print("[bold cyan][START] SAGE SEQUENTIAL MULTI-MODEL ORCHESTRATION[/bold cyan]")
@@ -693,8 +833,99 @@ class Orchestrator:
                 doc_str = f" [doc_id: {att.get('doc_id')}]" if att.get("doc_id") else ""
                 console.print(f"  * [yellow]{att['ref']}[/yellow]: {att['name']} ({att['type']}, {att['size']} bytes){doc_str}")
 
-        # Initial conversation for Gemma
-        user_payload = f"Objective:\n{user_objective}\n\nATTACHMENTS:\n{json.dumps(attachments_manifest, indent=2)}"
+        # Phase 8: inject bounded persisted context before Gemma's first call.
+        # Chat history remains complete in the ledger; this is only the compact
+        # prompt window.  Cold memories are queried with the trusted RunState
+        # identity, never an ID supplied by the user or Gemma.
+        from sage_memory import sage_memory
+        total_memory_budget = max(0, config.SAGE_CONTEXT_MEMORY_BUDGET_TOKENS)
+        global_memory_budget = min(
+            total_memory_budget,
+            max(0, config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS),
+        )
+
+        global_memories: List[Dict[str, Any]] = []
+        global_memory_ids: List[str] = []
+        global_memory_block = ""
+        global_memory_tokens = 0
+        try:
+            logger.info("global_memory_retrieval_started")
+            trace.append({
+                "actor": "durable_memory",
+                "action": "global_memory_retrieval_started",
+                "status": "started",
+            })
+            # list_memories is the existing canonical cold-memory retrieval
+            # path. It enforces active status and deterministic importance /
+            # updated_at / memory_id ordering in the database query.
+            global_memories = sage_memory.list_memories(
+                user_id=run_state.user_id,
+                memory_tier="cold",
+                limit=max(1, config.SAGE_GLOBAL_MEMORY_MAX_ITEMS),
+            )
+            global_memory_block, global_memory_ids, global_memory_tokens = _bounded_global_memory_context(
+                global_memories,
+                global_memory_budget,
+            )
+            logger.info(
+                "global_memory_count=%d global_memory_ids=%s global_memory_tokens=%d global_memory_injected=%s",
+                len(global_memory_ids), global_memory_ids, global_memory_tokens, bool(global_memory_block),
+            )
+            trace.append({
+                "actor": "durable_memory",
+                "action": "global_memory_injected",
+                "status": "success",
+                "global_memory_count": len(global_memory_ids),
+                "global_memory_ids": global_memory_ids,
+                "global_memory_tokens": global_memory_tokens,
+                "global_memory_injected": bool(global_memory_block),
+            })
+        except Exception as exc:
+            # Durable-memory availability must never prevent a normal chat.
+            logger.warning("global_memory_retrieval_failed: %s", exc)
+            trace.append({
+                "actor": "durable_memory",
+                "action": "global_memory_retrieval_failed",
+                "status": "error",
+                "error": str(exc),
+            })
+
+        # Reserve the configured global-memory allocation first, then use the
+        # remaining bounded context for recent chat messages.  Entries are
+        # selected whole and newest-first, so no visible chat history is
+        # rewritten or replaced by a summary.
+        hot_memory_budget = max(0, total_memory_budget - global_memory_tokens)
+        try:
+            recent_chat_block, recent_chat_tokens = _bounded_recent_chat_context(
+                sage_memory, run_state.chat_id, hot_memory_budget
+            )
+        except Exception as exc:
+            # Keep the same graceful-degradation guarantee for the existing
+            # recent-chat window when the memory backend is unavailable.
+            logger.warning("recent_chat_context_retrieval_failed: %s", exc)
+            recent_chat_block, recent_chat_tokens = "", 0
+            trace.append({
+                "actor": "durable_memory",
+                "action": "recent_chat_context_retrieval_failed",
+                "status": "error",
+                "error": str(exc),
+            })
+
+        context_blocks = [block for block in (recent_chat_block, global_memory_block) if block]
+        context_prefix = "\n\n".join(context_blocks)
+        user_payload = (
+            f"{context_prefix}\n\n" if context_prefix else ""
+        ) + f"Objective:\n{user_objective}\n\nATTACHMENTS:\n{json.dumps(attachments_manifest, indent=2)}"
+
+        trace.append({
+            "actor": "orchestrator",
+            "action": "memory_context_budgeted",
+            "status": "success",
+            "recent_chat_tokens": recent_chat_tokens,
+            "global_memory_tokens": global_memory_tokens,
+            "memory_context_budget_tokens": total_memory_budget,
+        })
+
         history: List[Dict[str, Any]] = [
             {"role": "system", "content": self.agent_system_prompt},
             {"role": "user", "content": user_payload}
@@ -721,6 +952,17 @@ class Orchestrator:
             wall_end = time.time()
             telemetry["total_wall_time"] = wall_end - wall_start
             telemetry["final_response_length"] = len(final_answer)
+
+            # Persist messages in mock mode
+            try:
+                sage_memory.write_message(
+                    run_state.chat_id, run_state.user_id, "user", user_objective
+                )
+                sage_memory.write_message(
+                    run_state.chat_id, run_state.user_id, "assistant", final_answer
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist conversation ledger in mock mode: %s", exc)
 
             return {
                 "status": "success",
@@ -1221,6 +1463,19 @@ class Orchestrator:
         console.print("="*60, style="bold green")
         console.print(table)
         console.print("="*60 + "\n", style="bold green")
+
+        # Persist conversation ledger entry upon successful completion
+        if final_answer and getattr(run_state, "chat_id", None):
+            try:
+                from sage_memory import sage_memory
+                sage_memory.write_message(
+                    run_state.chat_id, run_state.user_id, "user", user_objective
+                )
+                sage_memory.write_message(
+                    run_state.chat_id, run_state.user_id, "assistant", final_answer
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist conversation ledger: %s", exc)
 
         _emit({
             "event": "run_complete",

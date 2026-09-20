@@ -56,13 +56,61 @@
       "tool": "general_knowledge",
       "function": "answer_query",
       "when": "Any general factual query, definition, explanation, world knowledge, or conceptual question that does not rely on uploaded documents."
+    },
+    {
+      "capability": "search durable user memories",
+      "tool": "durable_memory",
+      "function": "memory_search",
+      "when": "When the current task may benefit from previously stored user preferences, facts, project details, decisions, or instructions. Use a natural language query to find semantically relevant memories."
+    },
+    {
+      "capability": "retrieve active session-scoped hot context",
+      "tool": "durable_memory",
+      "function": "memory_search_hot",
+      "when": "When the current task requires recent conversation or task-specific context stored during the current session."
+    },
+    {
+      "capability": "retrieve durable user cold context",
+      "tool": "durable_memory",
+      "function": "memory_search_cold",
+      "when": "When the current task may benefit from durable long-term user preferences, facts, project details, or standing instructions across all chats."
+    },
+    {
+      "capability": "retrieve a specific durable memory by ID",
+      "tool": "durable_memory",
+      "function": "memory_get",
+      "when": "When a specific memory_id is known and the full memory record is needed."
+    },
+    {
+      "capability": "store temporary session-scoped hot memory",
+      "tool": "durable_memory",
+      "function": "memory_store_hot",
+      "when": "When information is temporary, task-specific, conversation-specific, or useful primarily during the current workflow (e.g. current debugging focus, uploaded document details for this session)."
+    },
+    {
+      "capability": "store or supersede durable cold memory",
+      "tool": "durable_memory",
+      "function": "memory_store_cold",
+      "when": "When the user states a durable preference, fact, project detail, decision, or instruction that should persist across conversations. If replacing an existing active memory, provide its ID as supersedes_memory_id."
+    },
+    {
+      "capability": "promote hot memory to durable cold memory",
+      "tool": "durable_memory",
+      "function": "memory_promote",
+      "when": "When an active hot memory from the current conversation is determined to be durable and useful across future conversations."
+    },
+    {
+      "capability": "compact related hot context into a concise summary",
+      "tool": "durable_memory",
+      "function": "memory_summarize",
+      "when": "When the current session contains multiple related temporary hot memories that can be consolidated into a single factual summary to prevent context bloat."
     }
   ],
   "not_available": [
     "generic filesystem access",
     "arbitrary document ingestion",
     "large_document_analysis specialist",
-    "embedding or Chroma tools",
+    "direct embedding or Chroma tools (used internally by durable_memory)",
     "direct code writing or programming",
     "direct answering of general or factual questions",
     "direct arithmetic calculation",

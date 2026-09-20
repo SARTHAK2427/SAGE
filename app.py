@@ -471,13 +471,20 @@ async def _prepare_chat_request(
     objective: str,
     files: Optional[List[UploadFile]],
     direct_types: Optional[set[str]] = None,
+    chat_id: Optional[str] = None,
 ) -> tuple[RunState, list[dict], dict]:
     """Prepare request files, optionally bypassing DB ingestion for simple Flash inputs."""
     request_id = f"req_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     req_temp_dir = config.TEMP_DIR / request_id
     req_temp_dir.mkdir(parents=True, exist_ok=True)
 
-    run_state = RunState(request_id=request_id, user_text=objective.strip())
+    final_chat_id = chat_id or f"chat_{uuid.uuid4().hex[:12]}"
+    run_state = RunState(
+        request_id=request_id,
+        chat_id=final_chat_id,
+        user_id=config.DEFAULT_USER_ID,
+        user_text=objective.strip(),
+    )
     attachments_manifest = []
     file_map = {}
 
@@ -595,12 +602,15 @@ async def _prepare_chat_request(
 @app.post("/api/chat")
 async def chat_endpoint(
     objective: str = Form(...),
-    files: Optional[List[UploadFile]] = File(None)
+    files: Optional[List[UploadFile]] = File(None),
+    chat_id: Optional[str] = Form(None),
 ):
     if not objective or not objective.strip():
         raise HTTPException(status_code=400, detail="Objective prompt cannot be empty.")
 
-    run_state, attachments_manifest, file_map = await _prepare_chat_request(objective, files)
+    run_state, attachments_manifest, file_map = await _prepare_chat_request(
+        objective, files, chat_id=chat_id
+    )
 
     try:
         result = orchestrator.run(
@@ -609,13 +619,14 @@ async def chat_endpoint(
             file_map=file_map,
             run_state=run_state
         )
-
-        if isinstance(result, dict) and run_state.registered_documents:
-            # Backwards-compatible document reference metadata
-            result["registered_documents"] = [
-                {"doc_id": d.doc_id, "name": d.display_name, "type": d.file_type}
-                for d in run_state.registered_documents
-            ]
+        if isinstance(result, dict):
+            result["chat_id"] = run_state.chat_id
+            if run_state.registered_documents:
+                # Backwards-compatible document reference metadata
+                result["registered_documents"] = [
+                    {"doc_id": d.doc_id, "name": d.display_name, "type": d.file_type}
+                    for d in run_state.registered_documents
+                ]
         return JSONResponse(content=result)
     except Exception as e:
         import traceback
@@ -670,13 +681,16 @@ async def flash_endpoint(
 @app.post("/api/chat/stream")
 async def chat_stream_endpoint(
     objective: str = Form(...),
-    files: Optional[List[UploadFile]] = File(None)
+    files: Optional[List[UploadFile]] = File(None),
+    chat_id: Optional[str] = Form(None),
 ):
     """Real-time SSE streaming endpoint for live multi-model telemetry and inspection."""
     if not objective or not objective.strip():
         raise HTTPException(status_code=400, detail="Objective prompt cannot be empty.")
 
-    run_state, attachments_manifest, file_map = await _prepare_chat_request(objective, files)
+    run_state, attachments_manifest, file_map = await _prepare_chat_request(
+        objective, files, chat_id=chat_id
+    )
 
     async def event_generator():
         import asyncio
@@ -696,6 +710,8 @@ async def chat_stream_endpoint(
                     run_state=run_state,
                     event_callback=stream_callback,
                 )
+                if isinstance(res, dict):
+                    res["chat_id"] = run_state.chat_id
                 loop.call_soon_threadsafe(queue.put_nowait, {"event": "done", "result": res})
             except Exception as exc:
                 import traceback
