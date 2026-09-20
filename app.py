@@ -3,7 +3,7 @@ import uuid
 import shutil
 import time
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 import json
 import re
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,12 +37,16 @@ async def lifespan(app: FastAPI):
     # Startup
     cleanup_temp_dirs()
     print(f"SAGE Agent Orchestrator initialized. Static dir: {config.STATIC_DIR} | Gemma Context: {config.GEMMA_CONTEXT}")
-    # Pre-arm Gemma 4B in background so Turn 1 starts with 0s initiation delay
-    model_manager.rearm_agent_background()
+    # The legacy Gemma warm-up is skipped when Flash is the default; otherwise
+    # it would consume the VRAM reserved for the resident Gemma + Qwen pair.
+    if not config.FLASH_DEFAULT_ENABLED:
+        model_manager.rearm_agent_background()
     yield
     # Shutdown
     print("Shutting down SAGE and stopping any running model server...")
     model_manager.stop_current()
+    from flash.local_manager import local_flash_manager
+    local_flash_manager.stop_all()
 
 app = FastAPI(title="SAGE - Multi-Model Agent Orchestrator", lifespan=lifespan)
 
@@ -105,6 +109,91 @@ async def get_status():
             for k, v in config.MODELS.items()
         }
     }
+
+
+@app.get("/api/flash/catalog")
+async def flash_catalog():
+    """Return editable role/model metadata without exposing runtime secrets."""
+    from flash.catalog import public_catalog
+    return {"status": "success", "models": public_catalog()}
+
+
+@app.get("/api/flash/status")
+async def flash_status():
+    from flash.catalog import public_catalog
+    from flash.local_manager import local_flash_manager
+    from flash.runtime_config import runtime_config
+    return {
+        "status": "online",
+        "mode": "flash",
+        "runtime": runtime_config.public_snapshot(),
+        "local_servers": local_flash_manager.status(),
+        "models": public_catalog(),
+    }
+
+
+@app.post("/api/flash/runtime")
+async def configure_flash_runtime(payload: Dict[str, Any] = Body(...)):
+    """Apply an ephemeral local/remote role configuration for this server session."""
+    from flash.runtime_config import runtime_config
+    from flash.local_manager import local_flash_manager
+    try:
+        snapshot = runtime_config.configure(payload)
+        local_flash_manager.reconcile(snapshot)
+        return {"status": "success", "runtime": snapshot}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/flash/runtime")
+async def reset_flash_runtime():
+    from flash.local_manager import local_flash_manager
+    from flash.runtime_config import runtime_config
+    snapshot = runtime_config.reset()
+    local_flash_manager.reconcile(snapshot)
+    return {"status": "success", "runtime": snapshot}
+
+
+@app.delete("/api/flash/session/{session_id}")
+async def clear_flash_session(session_id: str):
+    """Clear background memory belonging only to the selected chat."""
+    from flash.memory_worker import memory_worker
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    return {"status": "success", "removed_memories": memory_worker.clear_session(session_id)}
+
+
+@app.post("/api/flash/runtime/test")
+async def test_flash_runtime():
+    """Test all three bindings after configuration; disabled memory is healthy."""
+    from starlette.concurrency import run_in_threadpool
+    from flash.transport import flash_transport
+    results = []
+    for role in ("gemma", "qwen", "memory"):
+        results.append(await run_in_threadpool(flash_transport.test_role, role))
+    return {"status": "success", "healthy": all(item.get("healthy") for item in results), "roles": results}
+
+
+@app.post("/api/flash/deploy")
+async def deploy_flash_model(payload: Dict[str, Any] = Body(...)):
+    """Deploy one fixed catalog role through a compatible remote bridge."""
+    from starlette.concurrency import run_in_threadpool
+    from flash.transport import flash_transport
+    role = str(payload.get("role") or "")
+    if role not in {"gemma", "qwen", "memory"}:
+        raise HTTPException(status_code=400, detail="role must be gemma, qwen, or memory")
+    try:
+        result = await run_in_threadpool(
+            flash_transport.deploy,
+            role,
+            str(payload.get("connection_id") or ""),
+            int(payload.get("gpu", 0)),
+        )
+        return {"status": "success", "result": result}
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Remote deployment failed: {exc}") from exc
 
 @app.post("/api/stop")
 async def stop_server():
@@ -381,8 +470,9 @@ async def get_artifact_image(doc_id: str, image_id: str):
 async def _prepare_chat_request(
     objective: str,
     files: Optional[List[UploadFile]],
+    direct_types: Optional[set[str]] = None,
 ) -> tuple[RunState, list[dict], dict]:
-    """Prepare RunState, attachment manifest, and file map for incoming chat request."""
+    """Prepare request files, optionally bypassing DB ingestion for simple Flash inputs."""
     request_id = f"req_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     req_temp_dir = config.TEMP_DIR / request_id
     req_temp_dir.mkdir(parents=True, exist_ok=True)
@@ -403,44 +493,47 @@ async def _prepare_chat_request(
             # Save uploaded bytes streamingly with bounded size check
             file_size = await _save_uploaded_file(file_item, save_path)
             suffix = Path(safe_filename).suffix.lstrip(".").lower()
+            direct_ready = suffix in (direct_types or set())
 
             # Ingest into SageDocumentDB
             doc_id = None
             ingest_error = None
-            try:
-                from db_service import document_db
-                ingest_res = document_db.ingest_document(str(save_path))
-                if isinstance(ingest_res, dict) and ingest_res.get("status") == "error":
-                    ingest_error = str(ingest_res.get("error", "Ingestion failed"))
-                else:
-                    doc_id = ingest_res.get("doc_id")
-            except Exception as exc:
-                print(f"Error: Document DB ingestion failed for '{safe_filename}': {exc}")
-                ingest_error = str(exc)
-
-            if doc_id:
-                # Permanently preserve source file in document artifact folder
+            if not direct_ready:
                 try:
                     from db_service import document_db
-                    store = getattr(document_db, "_store", None)
-                    if store:
-                        doc_dir = store.doc_dir(doc_id)
-                        doc_orig_dir = doc_dir / "original"
-                        doc_orig_dir.mkdir(parents=True, exist_ok=True)
-                        orig_copy_path = doc_orig_dir / safe_filename
-                        if not orig_copy_path.exists() and save_path.exists():
-                            shutil.copy2(save_path, orig_copy_path)
-                except Exception as copy_err:
-                    logger.warning("Could not preserve source copy for %s: %s", doc_id, copy_err)
+                    ingest_res = document_db.ingest_document(str(save_path))
+                    if isinstance(ingest_res, dict) and ingest_res.get("status") == "error":
+                        ingest_error = str(ingest_res.get("error", "Ingestion failed"))
+                    else:
+                        doc_id = ingest_res.get("doc_id")
+                except Exception as exc:
+                    print(f"Error: Document DB ingestion failed for '{safe_filename}': {exc}")
+                    ingest_error = str(exc)
 
-                run_state.register_document(
-                    doc_id=doc_id,
-                    display_name=safe_filename,
-                    file_type=suffix,
-                    source_name=safe_filename,
-                )
+            if doc_id or direct_ready:
+                # Permanently preserve source file in document artifact folder
+                if doc_id:
+                    try:
+                        from db_service import document_db
+                        store = getattr(document_db, "_store", None)
+                        if store:
+                            doc_dir = store.doc_dir(doc_id)
+                            doc_orig_dir = doc_dir / "original"
+                            doc_orig_dir.mkdir(parents=True, exist_ok=True)
+                            orig_copy_path = doc_orig_dir / safe_filename
+                            if not orig_copy_path.exists() and save_path.exists():
+                                shutil.copy2(save_path, orig_copy_path)
+                    except Exception as copy_err:
+                        logger.warning("Could not preserve source copy for %s: %s", doc_id, copy_err)
+
+                    run_state.register_document(
+                        doc_id=doc_id,
+                        display_name=safe_filename,
+                        file_type=suffix,
+                        source_name=safe_filename,
+                    )
                 img_id = None
-                if suffix in ("png", "jpg", "jpeg", "webp", "bmp", "gif"):
+                if doc_id and suffix in ("png", "jpg", "jpeg", "webp", "bmp", "gif"):
                     try:
                         from db_service import document_db
                         img_arts = document_db.list_artifacts(doc_id=doc_id, artifact_type="image")
@@ -458,7 +551,7 @@ async def _prepare_chat_request(
                     "type": suffix,
                     "size": file_size,
                     "path": str(save_path),
-                    "status": "ingested",
+                    "status": "ready" if direct_ready else "ingested",
                 }
                 att_manifest_entry = {
                     "ref": ref_id,
@@ -466,7 +559,7 @@ async def _prepare_chat_request(
                     "name": safe_filename,
                     "type": suffix,
                     "size": file_size,
-                    "status": "ingested",
+                    "status": "ready" if direct_ready else "ingested",
                 }
                 if img_id:
                     file_entry["image_id"] = img_id
@@ -516,6 +609,7 @@ async def chat_endpoint(
             file_map=file_map,
             run_state=run_state
         )
+
         if isinstance(result, dict) and run_state.registered_documents:
             # Backwards-compatible document reference metadata
             result["registered_documents"] = [
@@ -534,6 +628,44 @@ async def chat_endpoint(
                 "traceback": traceback.format_exc()
             }
         )
+
+
+@app.post("/api/flash")
+async def flash_endpoint(
+    objective: str = Form(...),
+    files: Optional[List[UploadFile]] = File(None),
+    session_id: Optional[str] = Form(None),
+):
+    """Run the host-agnostic Flash graph while leaving legacy chat untouched."""
+    if not objective or not objective.strip():
+        raise HTTPException(status_code=400, detail="Objective prompt cannot be empty.")
+    request_started = time.perf_counter()
+    direct_types = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "txt", "md", "csv", "json", "log", "py", "js", "html", "xml", "yaml", "yml"}
+    run_state, attachments_manifest, file_map = await _prepare_chat_request(
+        objective, files, direct_types=direct_types
+    )
+    intake_seconds = time.perf_counter() - request_started
+    from starlette.concurrency import run_in_threadpool
+    from flash.service import flash_service
+    try:
+        result = await run_in_threadpool(
+            flash_service.run,
+            objective=objective.strip(),
+            attachments=attachments_manifest,
+            file_map=file_map,
+            session_id=session_id,
+        )
+        if run_state.registered_documents:
+            result["registered_documents"] = [
+                {"doc_id": d.doc_id, "name": d.display_name, "type": d.file_type}
+                for d in run_state.registered_documents
+            ]
+        result.setdefault("telemetry", {})["intake_seconds"] = round(intake_seconds, 4)
+        result["telemetry"]["request_wall_time"] = round(time.perf_counter() - request_started, 4)
+        return JSONResponse(content=result)
+    except Exception as exc:
+        logger.exception("Flash request failed")
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(exc)})
 
 @app.post("/api/chat/stream")
 async def chat_stream_endpoint(

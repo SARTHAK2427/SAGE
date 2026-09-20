@@ -33,6 +33,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsBtn      = document.getElementById('settingsBtn');
     const settingsPanel    = document.getElementById('settingsPanel');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const openFlashRuntimeBtn = document.getElementById('openFlashRuntimeBtn');
+    const flashRuntimeModal = document.getElementById('flashRuntimeModal');
+    const flashRuntimeBackdrop = document.getElementById('flashRuntimeBackdrop');
+    const closeFlashRuntimeBtn = document.getElementById('closeFlashRuntimeBtn');
+    const flashModeBtn = document.getElementById('flashModeBtn');
+    const reasoningModeBtn = document.getElementById('reasoningModeBtn');
+    const resetChatInlineBtn = document.getElementById('resetChatInlineBtn');
 
     // Network status popup elements
     const netStatusBtn     = document.getElementById('netStatusBtn');
@@ -66,6 +73,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let attachedFiles = [];
     let isRunning     = false;
     let chatActive    = false;  // has the input moved to the bottom yet?
+    let activeChatMode = 'flash';
+    let flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
 
     // ══════════════════════════════════════════════════
     // STATUS POLL (Sync backend model configs & health)
@@ -204,6 +213,286 @@ document.addEventListener('DOMContentLoaded', () => {
     // ══════════════════════════════════════════════════
     settingsBtn?.addEventListener('click', () => settingsPanel.classList.toggle('open'));
     closeSettingsBtn?.addEventListener('click', () => settingsPanel.classList.remove('open'));
+    if (window.location.hash === '#settings') settingsPanel?.classList.add('open');
+
+    // FLASH RUNTIME CONTROL CENTER
+    const flashPrimaryRemoteFields = document.getElementById('flashPrimaryRemoteFields');
+    const flashMemoryRemoteFields = document.getElementById('flashMemoryRemoteFields');
+    const flashMemoryProvider = document.getElementById('flashMemoryProvider');
+    const flashRuntimeStatus = document.getElementById('flashRuntimeStatus');
+    const flashApplyBtn = document.getElementById('flashApplyBtn');
+    const flashTestBtn = document.getElementById('flashTestBtn');
+    const flashDeployBtn = document.getElementById('flashDeployBtn');
+
+    function flashStatus(kind, title, detail) {
+        if (!flashRuntimeStatus) return;
+        flashRuntimeStatus.dataset.kind = kind;
+        const titleEl = flashRuntimeStatus.querySelector('strong');
+        const detailEl = flashRuntimeStatus.querySelector('small');
+        if (titleEl) titleEl.textContent = title;
+        if (detailEl) detailEl.textContent = detail;
+    }
+
+    function renderFlashDiagnostics(roles, heading = '') {
+        const panel = document.getElementById('flashDiagnostics');
+        const list = document.getElementById('flashDiagnosticsList');
+        if (!panel || !list) return;
+        panel.hidden = false;
+        list.innerHTML = '';
+        if (heading) {
+            const intro = document.createElement('div');
+            intro.className = 'flash-diagnostic-row error';
+            intro.innerHTML = `<span class="flash-diagnostic-role">Runtime</span><span class="flash-diagnostic-state">ERROR</span><span class="flash-diagnostic-copy">${esc(heading)}</span>`;
+            list.appendChild(intro);
+        }
+        (roles || []).forEach(role => {
+            const disabled = role.enabled === false;
+            const healthy = !!role.healthy;
+            const row = document.createElement('div');
+            row.className = `flash-diagnostic-row ${healthy ? 'success' : 'error'}`;
+            const detail = disabled
+                ? 'Role is intentionally disabled.'
+                : (role.error || `${role.provider || 'Endpoint'} is ready.`);
+            const models = Array.isArray(role.models) && role.models.length
+                ? `Models reported by server: ${role.models.join(', ')}`
+                : 'No model IDs were reported by this role test.';
+            const suggestion = role.suggested_model_id
+                ? ` Auto-detected matching ID: ${role.suggested_model_id}.`
+                : '';
+            row.innerHTML = `
+                <span class="flash-diagnostic-role">${esc(role.role || 'unknown')}</span>
+                <span class="flash-diagnostic-state">${disabled ? 'DISABLED' : (healthy ? 'READY' : 'FAILED')}</span>
+                <span class="flash-diagnostic-copy">${esc(detail + suggestion)}<small>${esc(models)}</small></span>
+            `;
+            list.appendChild(row);
+        });
+    }
+
+    function useSuggestedFlashModelIds(roles) {
+        const fields = {
+            gemma: document.getElementById('flashGemmaModelId'),
+            qwen: document.getElementById('flashQwenModelId'),
+            memory: document.getElementById('flashMemoryModelId')
+        };
+        const changed = [];
+        (roles || []).forEach(role => {
+            if (role.suggested_model_id && fields[role.role]) {
+                fields[role.role].value = role.suggested_model_id;
+                changed.push(`${role.role} → ${role.suggested_model_id}`);
+            }
+        });
+        return changed;
+    }
+
+    function primaryProvider() {
+        return document.querySelector('input[name="flashPrimaryProvider"]:checked')?.value || 'local_gpu';
+    }
+
+    function syncFlashRuntimeFields() {
+        const remote = primaryProvider() === 'remote';
+        const memoryIsRemote = flashMemoryProvider?.value === 'secondary_remote';
+        if (flashPrimaryRemoteFields) flashPrimaryRemoteFields.hidden = !remote;
+        document.querySelectorAll('#flashPrimaryChoices .flash-choice').forEach(choice => {
+            choice.classList.toggle('active', !!choice.querySelector('input:checked'));
+        });
+        if (flashMemoryRemoteFields) {
+            flashMemoryRemoteFields.hidden = !memoryIsRemote;
+        }
+        const deployTarget = document.getElementById('flashDeployTarget');
+        const primaryOption = deployTarget?.querySelector('option[value="primary"]');
+        const memoryOption = deployTarget?.querySelector('option[value="memory"]');
+        if (primaryOption) primaryOption.disabled = !remote;
+        if (memoryOption) memoryOption.disabled = !memoryIsRemote;
+        if (deployTarget && deployTarget.selectedOptions[0]?.disabled) {
+            deployTarget.value = remote ? 'primary' : (memoryIsRemote ? 'memory' : 'primary');
+        }
+        if (flashDeployBtn) {
+            flashDeployBtn.disabled = !remote && !memoryIsRemote;
+            flashDeployBtn.title = flashDeployBtn.disabled ? 'Choose a remote endpoint to deploy through its bridge.' : '';
+        }
+    }
+
+    function setFlashModal(open) {
+        if (!flashRuntimeModal) return;
+        flashRuntimeModal.style.display = open ? 'flex' : 'none';
+        flashRuntimeModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+        document.body.style.overflow = open ? 'hidden' : '';
+        if (open) {
+            settingsPanel?.classList.remove('open');
+            loadFlashCatalog();
+        }
+    }
+
+    async function loadFlashCatalog() {
+        const note = document.getElementById('flashCatalogNote');
+        try {
+            const res = await fetch('/api/flash/catalog');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Catalog unavailable');
+            const labels = Object.values(data.models || {}).map(model => `${model.role}: ${model.file}`).join('  •  ');
+            if (note) note.textContent = labels || 'No catalog entries found.';
+        } catch (error) {
+            if (note) note.textContent = `Catalog error: ${error.message}`;
+        }
+    }
+
+    function buildFlashRuntimePayload() {
+        const primary = primaryProvider();
+        const memoryChoice = flashMemoryProvider?.value || 'disabled';
+        const connections = [];
+        const roles = {
+            gemma: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashGemmaModelId')?.value.trim() || 'gemma' },
+            qwen: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashQwenModelId')?.value.trim() || 'qwen' },
+            memory: { provider: 'disabled', connection_id: null, model_id: document.getElementById('flashMemoryModelId')?.value.trim() || 'memory' }
+        };
+
+        if (primary === 'remote') {
+            const baseUrl = document.getElementById('flashPrimaryUrl')?.value.trim();
+            if (!baseUrl) throw new Error('Enter the primary remote server URL.');
+            connections.push({ id: 'primary', label: 'Primary inference server', base_url: baseUrl, api_key: document.getElementById('flashPrimaryKey')?.value || '' });
+        }
+
+        if (memoryChoice === 'local_cpu') {
+            roles.memory.provider = 'local_cpu';
+        } else if (memoryChoice === 'primary_remote') {
+            if (primary !== 'remote') throw new Error('The shared remote memory option requires Gemma + Qwen to use a remote server.');
+            roles.memory.provider = 'remote';
+            roles.memory.connection_id = 'primary';
+        } else if (memoryChoice === 'secondary_remote') {
+            const baseUrl = document.getElementById('flashMemoryUrl')?.value.trim();
+            if (!baseUrl) throw new Error('Enter the separate memory server URL.');
+            connections.push({ id: 'memory', label: 'Memory server', base_url: baseUrl, api_key: document.getElementById('flashMemoryKey')?.value || '' });
+            roles.memory.provider = 'remote';
+            roles.memory.connection_id = 'memory';
+        }
+        return { connections, roles };
+    }
+
+    function updateNetworkDisclosure(payload) {
+        const usesRemote = Object.values(payload.roles || {}).some(role => role.provider === 'remote');
+        const badge = netStatusCard?.querySelector('.nsc-badge span:last-child');
+        const desc = netStatusCard?.querySelector('.nsc-desc');
+        const values = netStatusCard?.querySelectorAll('.nsc-stat-val');
+        const footer = netStatusCard?.querySelector('.nsc-footer span');
+        if (!badge || !desc || !values || values.length < 4 || !footer) return;
+        if (usesRemote) {
+            const hosts = (payload.connections || []).map(connection => {
+                try { return new URL(connection.base_url).host; } catch { return 'configured server'; }
+            }).join(', ');
+            badge.textContent = 'PRIVATE REMOTE GPU ACTIVE';
+            desc.textContent = 'Inference is routed only to the private endpoints configured for this running SAGE session.';
+            values[0].textContent = 'Configured endpoint only';
+            values[1].textContent = 'Controlled by your server';
+            values[2].textContent = hosts || 'Private endpoint';
+            values[3].textContent = 'User-configured';
+            footer.textContent = 'URLs and keys clear when the SAGE server restarts';
+        } else {
+            badge.textContent = '100% LOCAL · ZERO LEAKAGE';
+            desc.textContent = 'All agent steps, model reasoning, and attached documents run exclusively on your local machine.';
+            values[0].textContent = 'Blocked / Air-Gapped';
+            values[1].textContent = '0% (Completely Safe)';
+            values[2].textContent = '127.0.0.1 (Localhost)';
+            values[3].textContent = 'None / No API Keys';
+            footer.textContent = 'Verified: Machine is fully air-gapped';
+        }
+    }
+
+    async function applyFlashRuntime({ quiet = false } = {}) {
+        const payload = buildFlashRuntimePayload();
+        if (!quiet) flashStatus('working', 'Applying runtime', 'Updating ephemeral role bindings…');
+        const res = await fetch('/api/flash/runtime', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'Runtime configuration failed');
+        updateNetworkDisclosure(payload);
+        const summary = document.getElementById('flashSettingsSummary');
+        if (summary) summary.textContent = primaryProvider() === 'remote' ? 'Remote GPU active for this session' : 'Local RTX active for this session';
+        if (!quiet) flashStatus('success', 'Runtime applied', 'Configuration lives in memory only and clears when SAGE restarts.');
+        return data;
+    }
+
+    openFlashRuntimeBtn?.addEventListener('click', () => setFlashModal(true));
+    closeFlashRuntimeBtn?.addEventListener('click', () => setFlashModal(false));
+    flashRuntimeBackdrop?.addEventListener('click', () => setFlashModal(false));
+    if (window.location.hash === '#flash-runtime') setFlashModal(true);
+    document.querySelectorAll('input[name="flashPrimaryProvider"]').forEach(input => input.addEventListener('change', syncFlashRuntimeFields));
+    flashMemoryProvider?.addEventListener('change', syncFlashRuntimeFields);
+    syncFlashRuntimeFields();
+
+    flashApplyBtn?.addEventListener('click', async () => {
+        flashApplyBtn.disabled = true;
+        try { await applyFlashRuntime(); }
+        catch (error) { flashStatus('error', 'Could not apply runtime', error.message); }
+        finally { flashApplyBtn.disabled = false; }
+    });
+
+    flashTestBtn?.addEventListener('click', async () => {
+        flashTestBtn.disabled = true;
+        try {
+            await applyFlashRuntime({ quiet: true });
+            flashStatus('working', 'Testing roles', 'Starting local models if needed and probing every enabled endpoint…');
+            let res = await fetch('/api/flash/runtime/test', { method: 'POST' });
+            let data = await res.json();
+            if (!res.ok) throw new Error(data.detail || data.error || 'Connection test failed');
+            const corrected = useSuggestedFlashModelIds(data.roles);
+            if (corrected.length) {
+                flashStatus('working', 'Matching bridge model IDs', corrected.join('  •  '));
+                await applyFlashRuntime({ quiet: true });
+                res = await fetch('/api/flash/runtime/test', { method: 'POST' });
+                data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.error || 'Connection re-test failed');
+            }
+            renderFlashDiagnostics(data.roles);
+            const detail = (data.roles || []).map(role => `${role.role}: ${role.enabled === false ? 'disabled' : (role.healthy ? 'ready' : 'failed')}`).join('  •  ');
+            flashStatus(data.healthy ? 'success' : 'error', data.healthy ? 'Flash is ready' : 'One or more roles failed', detail);
+        } catch (error) {
+            flashStatus('error', 'Connection test failed', error.message);
+            renderFlashDiagnostics([], error.message);
+        } finally { flashTestBtn.disabled = false; }
+    });
+
+    flashDeployBtn?.addEventListener('click', async () => {
+        flashDeployBtn.disabled = true;
+        try {
+            await applyFlashRuntime({ quiet: true });
+            const role = document.getElementById('flashDeployRole')?.value || 'gemma';
+            const connectionId = document.getElementById('flashDeployTarget')?.value || 'primary';
+            const gpu = Number(document.getElementById('flashDeployGpu')?.value || 0);
+            flashStatus('working', `Deploying ${role}`, 'The remote bridge is downloading and starting the catalog model…');
+            const res = await fetch('/api/flash/deploy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, connection_id: connectionId, gpu })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || data.error || 'Deployment failed');
+            flashStatus('success', `${role} deployed`, data.result?.message || `Model is running on GPU #${gpu}.`);
+        } catch (error) {
+            flashStatus('error', 'Deployment failed', error.message);
+        } finally { flashDeployBtn.disabled = false; }
+    });
+
+    function showComposerNotice(message) {
+        const old = document.getElementById('composerNotice');
+        old?.remove();
+        const notice = document.createElement('div');
+        notice.id = 'composerNotice';
+        notice.className = 'composer-notice';
+        notice.textContent = message;
+        document.getElementById('inputCard')?.appendChild(notice);
+        setTimeout(() => notice.remove(), 2400);
+    }
+
+    flashModeBtn?.addEventListener('click', () => {
+        activeChatMode = 'flash';
+        flashModeBtn.classList.add('active');
+        reasoningModeBtn?.classList.remove('active');
+    });
+    reasoningModeBtn?.addEventListener('click', () => {
+        activeChatMode = 'flash';
+        flashModeBtn?.classList.add('active');
+        reasoningModeBtn.classList.remove('active');
+        showComposerNotice('Reasoning Mode is coming soon. Flash remains active.');
+    });
 
     // ══════════════════════════════════════════════════
     // NETWORK & LEAK STATUS POPOVER (Positioned to the left of the button)
@@ -1431,9 +1720,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // NEW CHAT — reset to initial centered state
     // ══════════════════════════════════════════════════
     newChatBtn?.addEventListener('click', resetChat);
+    resetChatInlineBtn?.addEventListener('click', async () => {
+        if (isRunning) return;
+        const sessionToClear = flashSessionId;
+        document.querySelector('.history-item.active')?.remove();
+        resetChat();
+        try {
+            await fetch(`/api/flash/session/${encodeURIComponent(sessionToClear)}`, { method: 'DELETE' });
+        } catch {
+            // The visible session is still reset even if no background memory existed.
+        }
+        showComposerNotice('Chat session cleared.');
+    });
     function resetChat() {
         chatMessages.innerHTML = '';
         chatActive = false;
+        flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
 
         // Restore welcome overlay
         welcomeOverlay.style.display = '';
@@ -2185,7 +2487,7 @@ document.addEventListener('DOMContentLoaded', () => {
     execTilesTrack?.addEventListener('scroll', updateTileBlurs);
 
     // Spawn a new tile ABOVE previous tiles (prepending shifts older tiles down)
-    function spawnExecTile({ id, actor, actorClass, action, detail, status = 'running', duration }) {
+    function spawnExecTile({ id, actor, actorClass, action, detail, status = 'running', duration, location = 'LOCAL' }) {
         if (execEmptyState) execEmptyState.style.display = 'none';
 
         const tile = document.createElement('div');
@@ -2207,7 +2509,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="et-foot">
                 <span class="et-time">${duration || (isDone ? '0.2s' : '0.0s')}</span>
-                <span class="et-pill">LOCAL</span>
+                <span class="et-pill">${esc(location)}</span>
             </div>
         `;
 
@@ -2368,6 +2670,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData();
         formData.append('objective', text || 'Analyze the attached files.');
+        formData.append('session_id', flashSessionId);
         const fileNames = attachedFiles.map(f => f.name);
         const hasFiles = attachedFiles.length > 0;
         attachedFiles.forEach(f => formData.append('files', f));
@@ -2392,19 +2695,19 @@ document.addEventListener('DOMContentLoaded', () => {
         expandPanel();
         rightPanelRunning();
 
-        // Spawn initial Gemma 4B reasoning tile
+        // Gemma is the single Flash entry point and routes in the same inference.
         let currentTile = spawnExecTile({
             id: 'gemma_reasoning',
-            actor: 'Gemma 4B',
+            actor: 'Gemma Flash',
             actorClass: 'gemma',
-            action: 'Reasoning & Planning',
-            detail: 'Decomposing objective, checking constraints, and formulating execution strategy...',
+            action: 'Reasoning & Routing',
+            detail: 'Answering directly or preparing a precise visual task for Qwen...',
             status: 'running'
         });
 
         // Dynamic multi-model tile spawning:
         // If files attached: Gemma calls Vision Model -> spawns new tile ABOVE Gemma, shifting Gemma DOWN
-        if (hasFiles) {
+        if (activeChatMode !== 'flash' && hasFiles) {
             activeTimers.push(setTimeout(() => {
                 if (!isRunning) return;
                 completeExecTile(currentTile, 'Identified document attachments. Invoking Vision model.');
@@ -2434,7 +2737,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }, 800));
                 }
             }, 600));
-        } else {
+        } else if (activeChatMode !== 'flash') {
             const lower = text.toLowerCase();
             const wantsCode = lower.includes('code') || lower.includes('python') || lower.includes('script') || lower.includes('function') || lower.includes('calc');
             if (wantsCode) {
@@ -2456,7 +2759,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentAbortController = new AbortController();
 
         try {
-            const res  = await fetch('/api/chat', {
+            const res  = await fetch(activeChatMode === 'flash' ? '/api/flash' : '/api/chat', {
                 method: 'POST',
                 body: formData,
                 signal: currentAbortController.signal
@@ -2479,7 +2782,41 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendError(data.error || 'Orchestration error.');
                 rightPanelIdle();
             } else {
-                completeExecTile(currentTile);
+                const gemmaSeconds = Number(data.telemetry?.gemma_seconds || 0);
+                const providers = data.telemetry?.providers || {};
+                completeExecTile(
+                    currentTile,
+                    `Flash Case ${data.flash_case || 'A'} selected.`,
+                    `${gemmaSeconds.toFixed(1)}s`
+                );
+                const gemmaLocation = currentTile?.querySelector('.et-pill');
+                if (gemmaLocation) gemmaLocation.textContent = providers.gemma === 'remote' ? 'REMOTE' : 'LOCAL';
+
+                if (hasFiles) {
+                    spawnExecTile({
+                        id: 'flash_intake_' + Date.now(),
+                        actor: 'Attachment Intake',
+                        actorClass: 'tool',
+                        action: 'Direct Shared-Pool Intake',
+                        detail: 'Simple files bypassed document-database ingestion; complex documents still use the document pipeline.',
+                        status: 'done',
+                        duration: `${Number(data.telemetry?.intake_seconds || 0).toFixed(1)}s`,
+                        location: 'LOCAL'
+                    });
+                }
+
+                if (['B', 'C', 'D'].includes(data.flash_case)) {
+                    spawnExecTile({
+                        id: 'flash_qwen_' + Date.now(),
+                        actor: 'Qwen3-VL Flash',
+                        actorClass: 'vision',
+                        action: data.flash_case === 'C' ? 'Visual Evidence Extraction' : 'Direct Visual Answer',
+                        detail: hasFiles ? `Inspected ${fileNames.join(', ')} on Gemma's instruction.` : 'Completed delegated visual analysis.',
+                        status: 'done',
+                        duration: `${Number(data.telemetry?.qwen_seconds || 0).toFixed(1)}s`,
+                        location: providers.qwen === 'remote' ? 'REMOTE' : 'LOCAL'
+                    });
+                }
 
                 // If backend provided trace events, spawn any remaining distinct steps
                 if (data.trace && Array.isArray(data.trace)) {
@@ -2499,15 +2836,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // Final synthesis tile spawned on top
-                const wallTime = data.telemetry?.total_wall_time ? data.telemetry.total_wall_time.toFixed(1) + 's' : '0.3s';
+                const wallTime = data.telemetry?.request_wall_time ? data.telemetry.request_wall_time.toFixed(1) + 's' : '0.3s';
                 spawnExecTile({
                     id: 'gemma_final',
-                    actor: 'Gemma 4B',
-                    actorClass: 'gemma',
-                    action: 'Final Synthesis & Verification',
-                    detail: 'Consolidated local responses. Zero external data leak verified.',
+                    actor: 'SAGE Orchestrator',
+                    actorClass: 'tool',
+                    action: data.flash_case === 'C' ? 'Request Complete After Synthesis' : 'Request Complete',
+                    detail: data.memory_job ? 'End-to-end request complete. Background memory compression queued.' : 'End-to-end request complete; this tile is not a model call.',
                     status: 'done',
-                    duration: wallTime
+                    duration: wallTime,
+                    location: 'TOTAL'
                 });
 
                 // PROMPT RESULT IS READY -> MAKE THE CHATBOX GO DOWN NOW!

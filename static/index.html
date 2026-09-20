@@ -131,6 +131,11 @@
                         <span>Temperature</span>
                         <select class="sp-select"><option>0.3</option><option selected>0.7</option><option>1.0</option></select>
                     </div>
+                    <button class="flash-open-btn" id="openFlashRuntimeBtn" type="button">
+                        <span class="flash-open-dot"></span>
+                        <span><strong>Flash runtime</strong><small id="flashSettingsSummary">Local RTX / remote GPU setup</small></span>
+                        <span aria-hidden="true">&rarr;</span>
+                    </button>
                 </div>
                 <div class="sp-group">
                     <div class="sp-group-label">PRIVACY</div>
@@ -205,8 +210,16 @@
                             <button class="iab attach-btn" id="attachBtn" title="Attach document or file">
                                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                             </button>
+                            <div class="chat-mode-switch" aria-label="SAGE mode">
+                                <button class="chat-mode-btn active" id="flashModeBtn" type="button">FLASH</button>
+                                <button class="chat-mode-btn" id="reasoningModeBtn" type="button">REASONING <small>SOON</small></button>
+                            </div>
                         </div>
                         <div class="it-right">
+                            <button class="reset-chat-btn" id="resetChatInlineBtn" type="button" title="Clear this session and start fresh" aria-label="Reset chat">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
+                                <span>Reset</span>
+                            </button>
                             <button class="stop-btn" id="stopBtn" style="display:none">
                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
                                 Stop
@@ -764,6 +777,94 @@
 </div>
 
 <!-- ════════════════════ IN-SITE DOCUMENT PREVIEW MODAL ════════════════════ -->
+<!-- Flash Runtime Control Center: intentionally spacious for deep configuration -->
+<div class="flash-runtime-modal" id="flashRuntimeModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="flashRuntimeTitle">
+    <div class="flash-runtime-backdrop" id="flashRuntimeBackdrop"></div>
+    <div class="flash-runtime-dialog">
+        <header class="flash-runtime-header">
+            <div>
+                <div class="flash-kicker">SAGE FLASH</div>
+                <h2 id="flashRuntimeTitle">Inference control center</h2>
+                <p>Bind each role to local hardware or any compatible private GPU endpoint. Nothing here is saved to disk.</p>
+            </div>
+            <button class="flash-runtime-close" id="closeFlashRuntimeBtn" type="button" aria-label="Close">&times;</button>
+        </header>
+
+        <div class="flash-runtime-body">
+            <section class="flash-runtime-section">
+                <div class="flash-section-heading">
+                    <span class="flash-step">01</span>
+                    <div><h3>Gemma + Qwen inference</h3><p>The resident interactive pair. Both roles use the same location.</p></div>
+                </div>
+                <div class="flash-choice-grid" id="flashPrimaryChoices">
+                    <label class="flash-choice active"><input type="radio" name="flashPrimaryProvider" value="local_gpu" checked><strong>Local RTX GPU</strong><span>Launch both GGUF models on this machine.</span></label>
+                    <label class="flash-choice"><input type="radio" name="flashPrimaryProvider" value="remote"><strong>Remote GPU server</strong><span>4060, Kaggle, or company-hosted bridge.</span></label>
+                </div>
+                <div class="flash-connection-fields" id="flashPrimaryRemoteFields" hidden>
+                    <label><span>Server URL</span><input id="flashPrimaryUrl" type="url" placeholder="https://your-tunnel.example.com" autocomplete="off" spellcheck="false"></label>
+                    <label><span>API key <em>optional for trusted local URLs</em></span><input id="flashPrimaryKey" type="password" placeholder="Bearer key" autocomplete="new-password"></label>
+                </div>
+                <div class="flash-model-id-grid">
+                    <label><span>Gemma server model ID</span><input id="flashGemmaModelId" value="gemma" autocomplete="off"></label>
+                    <label><span>Qwen server model ID</span><input id="flashQwenModelId" value="qwen" autocomplete="off"></label>
+                </div>
+            </section>
+
+            <section class="flash-runtime-section">
+                <div class="flash-section-heading">
+                    <span class="flash-step">02</span>
+                    <div><h3>Background memory model</h3><p>Runs outside the response critical path. Choose CPU, reuse the GPU server, or use another endpoint.</p></div>
+                </div>
+                <label class="flash-wide-field"><span>Memory location</span>
+                    <select id="flashMemoryProvider">
+                        <option value="disabled">Disabled</option>
+                        <option value="local_cpu">Local CPU / RAM</option>
+                        <option value="primary_remote">Same remote server as Gemma + Qwen</option>
+                        <option value="secondary_remote">Separate remote server</option>
+                    </select>
+                </label>
+                <div class="flash-connection-fields" id="flashMemoryRemoteFields" hidden>
+                    <label><span>Memory server URL</span><input id="flashMemoryUrl" type="url" placeholder="https://second-tunnel.example.com" autocomplete="off" spellcheck="false"></label>
+                    <label><span>API key <em>optional</em></span><input id="flashMemoryKey" type="password" placeholder="Bearer key" autocomplete="new-password"></label>
+                </div>
+                <div class="flash-model-id-grid one">
+                    <label><span>Memory server model ID</span><input id="flashMemoryModelId" value="memory" autocomplete="off"></label>
+                </div>
+            </section>
+
+            <section class="flash-runtime-section compact">
+                <div class="flash-section-heading">
+                    <span class="flash-step">03</span>
+                    <div><h3>Catalog deployment</h3><p>Optional. Ask a compatible SAGE bridge to fetch the fixed repo/quant entries in <code>flash_models.json</code>.</p></div>
+                </div>
+                <div class="flash-deploy-row">
+                    <select id="flashDeployRole"><option value="gemma">Gemma</option><option value="qwen">Qwen</option><option value="memory">Memory 2B</option></select>
+                    <select id="flashDeployTarget"><option value="primary">Primary endpoint</option><option value="memory">Memory endpoint</option></select>
+                    <select id="flashDeployGpu"><option value="0">GPU #0</option><option value="1">GPU #1</option></select>
+                    <button id="flashDeployBtn" type="button">Deploy model</button>
+                </div>
+                <div class="flash-catalog-note" id="flashCatalogNote">Catalog will be checked when this panel opens.</div>
+            </section>
+
+            <section class="flash-diagnostics" id="flashDiagnostics" hidden>
+                <div class="flash-diagnostics-head">
+                    <strong>Connection diagnostics</strong>
+                    <span>The exact response from each configured role.</span>
+                </div>
+                <div class="flash-diagnostics-list" id="flashDiagnosticsList"></div>
+            </section>
+        </div>
+
+        <footer class="flash-runtime-footer">
+            <div class="flash-runtime-status" id="flashRuntimeStatus" data-kind="idle"><span></span><div><strong>Not tested</strong><small>Apply a profile, then test all enabled roles.</small></div></div>
+            <div class="flash-runtime-actions">
+                <button class="flash-secondary-btn" id="flashTestBtn" type="button">Test connections</button>
+                <button class="flash-primary-btn" id="flashApplyBtn" type="button">Apply for this session</button>
+            </div>
+        </footer>
+    </div>
+</div>
+
 <div class="doc-preview-modal" id="docPreviewModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="dpmFileName">
     <div class="dpm-backdrop" id="dpmBackdrop"></div>
     <div class="dpm-dialog">
