@@ -19,7 +19,6 @@ import uvicorn
 
 import config
 from model_manager import model_manager
-from orchestrator import orchestrator
 from core.run_state import RunState, RegisteredDocument
 
 # Clean up older temp request folders on startup
@@ -613,6 +612,10 @@ async def chat_endpoint(
     )
 
     try:
+        # Flash is the default runtime.  Keep the legacy orchestrator lazy so
+        # a stale document-vector index cannot prevent Flash and durable
+        # SQLite memory from starting.
+        from orchestrator import orchestrator
         result = orchestrator.run(
             user_objective=objective.strip(),
             attachments_manifest=attachments_manifest,
@@ -665,6 +668,7 @@ async def flash_endpoint(
             attachments=attachments_manifest,
             file_map=file_map,
             session_id=session_id,
+            user_id=config.DEFAULT_USER_ID,
         )
         if run_state.registered_documents:
             result["registered_documents"] = [
@@ -703,6 +707,7 @@ async def chat_stream_endpoint(
 
         def worker():
             try:
+                from orchestrator import orchestrator
                 res = orchestrator.run(
                     user_objective=objective.strip(),
                     attachments_manifest=attachments_manifest,

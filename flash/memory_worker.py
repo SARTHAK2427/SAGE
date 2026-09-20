@@ -22,7 +22,14 @@ class FlashMemoryWorker:
         self._cleared_sessions: set[str] = set()
         self._store_path = config.MODEL_RUNTIME_ROOT / "flash_memory.jsonl"
 
-    def schedule(self, session_id: str, user_message: str, answer: str) -> Optional[str]:
+    def schedule(
+        self,
+        session_id: str,
+        user_message: str,
+        answer: str,
+        *,
+        user_id: Optional[str] = None,
+    ) -> Optional[str]:
         if runtime_config.role("memory")["provider"] == "disabled":
             return None
         with self._file_lock:
@@ -31,10 +38,10 @@ class FlashMemoryWorker:
         if not self._slots.acquire(blocking=False):
             return None
         job_id = f"mem_{int(time.time() * 1000)}"
-        self._executor.submit(self._run, job_id, session_id, user_message, answer)
+        self._executor.submit(self._run, job_id, session_id, user_message, answer, user_id or config.DEFAULT_USER_ID)
         return job_id
 
-    def _run(self, job_id: str, session_id: str, user_message: str, answer: str) -> None:
+    def _run(self, job_id: str, session_id: str, user_message: str, answer: str, user_id: str) -> None:
         try:
             prompt = (
                 "Compress this completed conversation turn into durable memory. Preserve factual preferences, "
@@ -55,6 +62,22 @@ class FlashMemoryWorker:
                 self._store_path.parent.mkdir(parents=True, exist_ok=True)
                 with self._store_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            # Keep the Flash compressor as a producer of session-scoped hot
+            # memories, so Flash and the durable-memory system share the same
+            # canonical store without promoting every turn to global memory.
+            summary = str(record["summary"] or "").strip()
+            if summary:
+                try:
+                    from sage_memory import sage_memory
+                    sage_memory.store_memory(
+                        user_id=user_id,
+                        content=summary,
+                        category="fact",
+                        source_chat_id=session_id,
+                        memory_tier="hot",
+                    )
+                except Exception:
+                    pass
         finally:
             self._slots.release()
 

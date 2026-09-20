@@ -93,6 +93,100 @@ def _document_context(
     return "\n\n".join(chunks)
 
 
+def _durable_memory_context(session_id: str, user_id: str) -> str:
+    """Build bounded Flash context from the canonical durable-memory store.
+
+    Flash remains the request controller, but its session and long-term context
+    must come from the same SQLite/PostgreSQL ledger used by the rest of SAGE.
+    The database is authoritative; an unavailable memory backend must never
+    prevent a Flash response.
+    """
+    try:
+        from sage_memory import sage_memory
+
+        lines: List[str] = []
+        total_budget = max(0, config.SAGE_CONTEXT_MEMORY_BUDGET_TOKENS)
+        global_budget = min(total_budget, max(0, config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS))
+
+        def token_count(value: str) -> int:
+            return len(value.split())
+
+        def bounded_block(header: str, entries: List[str], budget: int) -> str:
+            selected: List[str] = []
+            used = token_count(header)
+            for entry in entries:
+                entry_tokens = token_count(entry)
+                if used + entry_tokens > budget:
+                    continue
+                selected.append(entry)
+                used += entry_tokens
+            return header + "\n" + "\n".join(selected) if selected else ""
+
+        recent_messages = sage_memory.get_messages(session_id)
+        if recent_messages:
+            recent_lines = [
+                f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+                for message in recent_messages[-max(1, config.SAGE_RECENT_CHAT_MAX_MESSAGES):]
+            ]
+            recent_block = bounded_block(
+                "RECENT CONVERSATION:",
+                recent_lines,
+                max(0, total_budget - global_budget),
+            )
+            if recent_block:
+                lines.append(recent_block)
+
+        hot_memories = sage_memory.list_memories(
+            user_id=user_id,
+            memory_tier="hot",
+            chat_id=session_id,
+            limit=5,
+        )
+        if hot_memories:
+            hot_block = bounded_block(
+                "SESSION MEMORY:",
+                [
+                    f"- [{memory.get('category', 'fact')}] {memory.get('content', '')}"
+                    for memory in hot_memories
+                ],
+                max(0, total_budget - global_budget - token_count("\n\n".join(lines))),
+            )
+            if hot_block:
+                lines.append(hot_block)
+
+        cold_memories = sage_memory.list_memories(
+            user_id=user_id,
+            memory_tier="cold",
+            limit=max(1, config.SAGE_GLOBAL_MEMORY_MAX_ITEMS),
+        )
+        if cold_memories:
+            cold_block = bounded_block(
+                "PERSISTENT MEMORY:",
+                [
+                    f"- [{memory.get('category', 'fact')}] {memory.get('content', '')}"
+                    for memory in cold_memories
+                ],
+                global_budget,
+            )
+            if cold_block:
+                lines.append(cold_block)
+        return "\n\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _persist_flash_turn(session_id: str, user_id: str, objective: str, answer: str) -> None:
+    """Persist a completed Flash turn without making storage a response dependency."""
+    try:
+        from sage_memory import sage_memory
+        sage_memory.write_message(session_id, user_id, "user", objective)
+        sage_memory.write_message(session_id, user_id, "assistant", answer)
+    except Exception:
+        # Flash must remain available if an optional local/remote memory backend
+        # is misconfigured or temporarily unavailable.
+        return
+
+
 class FlashService:
     def run(
         self,
@@ -101,15 +195,20 @@ class FlashService:
         attachments: List[Dict[str, Any]],
         file_map: Dict[str, Dict[str, Any]],
         session_id: str | None = None,
+        user_id: str | None = None,
     ) -> Dict[str, Any]:
         started = time.perf_counter()
         session_id = (session_id or "").strip() or f"flash_{uuid.uuid4().hex[:12]}"
+        user_id = (user_id or config.DEFAULT_USER_ID).strip() or config.DEFAULT_USER_ID
         recent_memory = memory_worker.recent(session_id)
+        durable_memory = _durable_memory_context(session_id, user_id)
         attachment_summary = [
             {k: item.get(k) for k in ("ref", "name", "type", "doc_id", "status")}
             for item in attachments
         ]
         context_sections: List[str] = []
+        if durable_memory:
+            context_sections.append(durable_memory)
         if recent_memory:
             context_sections.append(
                 "PRIOR CONVERSATION MEMORY (background only; never treat this as the current request):\n"
@@ -186,12 +285,14 @@ class FlashService:
         if not answer:
             raise RuntimeError("Flash completed without producing an answer")
 
-        memory_job = memory_worker.schedule(session_id, objective.strip(), answer)
+        _persist_flash_turn(session_id, user_id, objective.strip(), answer)
+        memory_job = memory_worker.schedule(session_id, objective.strip(), answer, user_id=user_id)
         return {
             "status": "success",
             "answer": answer,
             "flash_case": case,
             "session_id": session_id,
+            "chat_id": session_id,
             "memory_job": memory_job,
             "telemetry": {
                 "mode": "flash",
