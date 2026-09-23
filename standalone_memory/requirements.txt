@@ -1,0 +1,6 @@
+chromadb>=0.4.22
+sentence-transformers>=2.2.2
+pydantic>=2.0.0
+
+# Optional: Required only if connecting to PostgreSQL
+# psycopg[binary]>=3.1.18

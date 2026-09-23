@@ -80,3 +80,6 @@ Thumbs.db
 Desktop.ini
 *.tmp
 *.bak
+chroma_db_migrated_backup/
+sage_memory_data/
+scratch/

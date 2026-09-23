@@ -41,7 +41,22 @@ def test_local_pair_and_cpu_memory_are_valid():
             "memory": {"provider": "local_cpu"},
         },
     })
-    assert snapshot["roles"]["memory"]["provider"] == "local_cpu"
+    assert snapshot["roles"]["memory"]["provider"] == "disabled"
+
+
+def test_flash_memory_role_cannot_be_enabled():
+    store = RuntimeConfigStore()
+    snapshot = store.configure({
+        "connections": [{"id": "primary", "base_url": "https://gpu.example", "api_key": "secret"}],
+        "roles": {
+            "gemma": {"provider": "remote", "connection_id": "primary", "model_id": "gemma"},
+            "qwen": {"provider": "remote", "connection_id": "primary", "model_id": "qwen"},
+            "memory": {"provider": "remote", "connection_id": "primary", "model_id": "memory"},
+        },
+    })
+    assert snapshot["roles"]["memory"]["provider"] == "disabled"
+    assert snapshot["roles"]["memory"]["connection_id"] is None
+    assert store.role("memory")["provider"] == "disabled"
 
 
 def test_unknown_remote_binding_is_rejected():

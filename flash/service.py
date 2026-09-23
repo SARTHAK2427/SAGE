@@ -12,7 +12,6 @@ from typing import Any, Dict, List
 
 import config
 from core.json_repair import clean_json_string
-from flash.memory_worker import memory_worker
 from flash.transport import flash_transport
 
 
@@ -196,12 +195,13 @@ class FlashService:
         file_map: Dict[str, Dict[str, Any]],
         session_id: str | None = None,
         user_id: str | None = None,
+        temperature: float | None = None,
+        save_history: bool = True,
     ) -> Dict[str, Any]:
         started = time.perf_counter()
         session_id = (session_id or "").strip() or f"flash_{uuid.uuid4().hex[:12]}"
         user_id = (user_id or config.DEFAULT_USER_ID).strip() or config.DEFAULT_USER_ID
-        recent_memory = memory_worker.recent(session_id)
-        durable_memory = _durable_memory_context(session_id, user_id)
+        durable_memory = _durable_memory_context(session_id, user_id) if save_history else ""
         attachment_summary = [
             {k: item.get(k) for k in ("ref", "name", "type", "doc_id", "status")}
             for item in attachments
@@ -209,11 +209,6 @@ class FlashService:
         context_sections: List[str] = []
         if durable_memory:
             context_sections.append(durable_memory)
-        if recent_memory:
-            context_sections.append(
-                "PRIOR CONVERSATION MEMORY (background only; never treat this as the current request):\n"
-                + "\n".join(str(row.get("summary", "")) for row in recent_memory)
-            )
         current_turn = "CURRENT USER REQUEST (authoritative):\n" + objective.strip()
         if attachment_summary:
             current_turn += "\n\nCURRENT-TURN ATTACHMENTS:\n" + json.dumps(attachment_summary, ensure_ascii=False)
@@ -230,6 +225,7 @@ class FlashService:
                 {"role": "user", "content": user_context},
             ],
             json_mode=True,
+            temperature=temperature,
         )
         route = _parse_route(gemma["content"])
         case = str(route.get("flash_case") or "A").upper()
@@ -258,6 +254,7 @@ class FlashService:
                     {"role": "system", "content": _prompt("qwen_flash_system.txt")},
                     {"role": "user", "content": qwen_content},
                 ],
+                temperature=temperature,
             )
             qwen_result = qwen["content"].strip()
             qwen_duration = qwen["duration"]
@@ -270,6 +267,7 @@ class FlashService:
                         {"role": "user", "content": objective.strip()},
                         {"role": "user", "content": f"QWEN VISUAL EVIDENCE:\n{qwen_result}"},
                     ],
+                    temperature=temperature,
                 )
                 gemma_answer = synth["content"].strip()
                 synth_duration = synth["duration"]
@@ -285,15 +283,16 @@ class FlashService:
         if not answer:
             raise RuntimeError("Flash completed without producing an answer")
 
-        _persist_flash_turn(session_id, user_id, objective.strip(), answer)
-        memory_job = memory_worker.schedule(session_id, objective.strip(), answer, user_id=user_id)
+        if save_history:
+            _persist_flash_turn(session_id, user_id, objective.strip(), answer)
         return {
             "status": "success",
             "answer": answer,
             "flash_case": case,
             "session_id": session_id,
             "chat_id": session_id,
-            "memory_job": memory_job,
+            "memory_job": None,
+            "history_saved": bool(save_history),
             "telemetry": {
                 "mode": "flash",
                 "gemma_seconds": round(gemma["duration"], 4),

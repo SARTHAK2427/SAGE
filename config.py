@@ -37,7 +37,7 @@ GEMMA_CONTEXT = int(os.environ.get("GEMMA_CONTEXT", "16384"))
 
 # Single-User Identity Namespace & Memory DB Config
 DEFAULT_USER_ID = os.environ.get("SAGE_DEFAULT_USER_ID", "local_user")
-SAGE_MEMORY_DB = os.environ.get("SAGE_MEMORY_DB", "postgres").lower().strip()
+SAGE_MEMORY_DB = os.environ.get("SAGE_MEMORY_DB", "sqlite").lower().strip()
 SAGE_MEMORY_COLLECTION = os.environ.get("SAGE_MEMORY_COLLECTION", "sage_memory")
 SAGE_MEMORY_HOT_COLLECTION = os.environ.get("SAGE_MEMORY_HOT_COLLECTION", "sage_memory_hot")
 SAGE_MEMORY_COLD_COLLECTION = os.environ.get("SAGE_MEMORY_COLD_COLLECTION", "sage_memory_cold")

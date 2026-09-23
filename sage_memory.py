@@ -22,7 +22,7 @@ import config
 logger = logging.getLogger(__name__)
 
 # Controlled categories for durable global facts (Phase 2 & Phase 7)
-ALLOWED_CATEGORIES = {"fact", "preference", "project", "decision", "instruction"}
+ALLOWED_CATEGORIES = {"fact", "preference", "project", "decision", "instruction", "task", "personal", "technical", "summary"}
 ALLOWED_STATUSES = {"active", "superseded", "deleted", "promoted", "compacted"}
 ALLOWED_TIERS = {"hot", "cold"}
 
@@ -84,6 +84,7 @@ class SageMemory:
 
     def __init__(self) -> None:
         self._initialized_backends: set[str] = set()
+        self._initialized_sqlite_path: Optional[str] = None
 
     def _get_connection(self) -> Any:
         backend = get_backend_type()
@@ -92,20 +93,13 @@ class SageMemory:
             db_path = _get_sqlite_db_path()
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
-            if "sqlite" not in self._initialized_backends:
+            if self._initialized_sqlite_path != db_path:
                 self._init_sqlite_schema(conn)
+                self._initialized_sqlite_path = db_path
                 self._initialized_backends.add("sqlite")
             return conn
 
         elif backend == "postgres":
-            try:
-                import psycopg2
-                import psycopg2.extras
-            except ImportError as exc:
-                raise RuntimeError(
-                    "SAGE_MEMORY_DB is set to 'postgres', but psycopg2 is not installed."
-                ) from exc
-
             db_url = (
                 os.environ.get("SAGE_DATABASE_URL")
                 or os.environ.get("DATABASE_URL")
@@ -114,8 +108,16 @@ class SageMemory:
             if not db_url or not str(db_url).strip():
                 raise RuntimeError(
                     "SAGE_MEMORY_DB is set to 'postgres', but no database URL is configured. "
-                    "Set SAGE_DATABASE_URL or DATABASE_URL."
+                    "Set SAGE_DATABASE_URL or DATABASE_URL. For local SAGE, use SAGE_MEMORY_DB=sqlite."
                 )
+            try:
+                import psycopg2
+                import psycopg2.extras
+            except ImportError as exc:
+                raise RuntimeError(
+                    "SAGE_MEMORY_DB is set to 'postgres', but psycopg2 is not installed. "
+                    "For local SAGE memory set SAGE_MEMORY_DB=sqlite."
+                ) from exc
 
             try:
                 conn = psycopg2.connect(db_url)
@@ -209,6 +211,27 @@ class SageMemory:
                 """
             )
 
+            # Memory Activity ledger for operational tracking
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_activity (
+                    activity_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    chat_id TEXT,
+                    memory_id TEXT,
+                    details TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_activity_user_created
+                ON memory_activity(user_id, created_at DESC);
+                """
+            )
+
     def _init_postgres_schema(self, conn: Any) -> None:
         with conn:
             with conn.cursor() as cur:
@@ -286,6 +309,25 @@ class SageMemory:
                     """
                     CREATE INDEX IF NOT EXISTS idx_memories_chat_tier
                     ON memories(source_chat_id, memory_tier);
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS memory_activity (
+                        activity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        event_type TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        chat_id TEXT,
+                        memory_id TEXT,
+                        details TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_activity_user_created
+                    ON memory_activity(user_id, created_at DESC);
                     """
                 )
 
@@ -441,6 +483,168 @@ class SageMemory:
 
         return "\n".join(lines)
 
+    def list_chats(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """List conversations for a user, newest activity first."""
+        if not user_id:
+            return []
+        limit = max(1, min(int(limit or 100), 500))
+        backend = get_backend_type()
+        conn = self._get_connection()
+        results: List[Dict[str, Any]] = []
+        try:
+            if backend == "sqlite":
+                cursor = conn.execute(
+                    """
+                    SELECT
+                        m.chat_id AS chat_id,
+                        m.user_id AS user_id,
+                        MIN(m.created_at) AS created_at,
+                        MAX(m.created_at) AS updated_at,
+                        COUNT(*) AS message_count,
+                        (
+                            SELECT content FROM messages t
+                            WHERE t.chat_id = m.chat_id AND t.role = 'user'
+                            ORDER BY t.created_at ASC, t.msg_id ASC
+                            LIMIT 1
+                        ) AS title
+                    FROM messages m
+                    WHERE m.user_id = ?
+                    GROUP BY m.chat_id, m.user_id
+                    ORDER BY updated_at DESC
+                    LIMIT ?;
+                    """,
+                    (user_id, limit),
+                )
+                for row in cursor.fetchall():
+                    title = (row["title"] or "New conversation").strip()
+                    if len(title) > 72:
+                        title = title[:69].rstrip() + "…"
+                    results.append({
+                        "chat_id": str(row["chat_id"]),
+                        "user_id": str(row["user_id"]),
+                        "title": title or "New conversation",
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                        "message_count": int(row["message_count"] or 0),
+                    })
+            else:
+                import psycopg2.extras
+                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            m.chat_id AS chat_id,
+                            m.user_id AS user_id,
+                            MIN(m.created_at) AS created_at,
+                            MAX(m.created_at) AS updated_at,
+                            COUNT(*) AS message_count,
+                            (
+                                SELECT content FROM messages t
+                                WHERE t.chat_id = m.chat_id AND t.role = 'user'
+                                ORDER BY t.created_at ASC, t.msg_id ASC
+                                LIMIT 1
+                            ) AS title
+                        FROM messages m
+                        WHERE m.user_id = %s
+                        GROUP BY m.chat_id, m.user_id
+                        ORDER BY updated_at DESC
+                        LIMIT %s;
+                        """,
+                        (user_id, limit),
+                    )
+                    for row in cur.fetchall():
+                        title = (row["title"] or "New conversation").strip()
+                        if len(title) > 72:
+                            title = title[:69].rstrip() + "…"
+                        results.append({
+                            "chat_id": str(row["chat_id"]),
+                            "user_id": str(row["user_id"]),
+                            "title": title or "New conversation",
+                            "created_at": str(row["created_at"]),
+                            "updated_at": str(row["updated_at"]),
+                            "message_count": int(row["message_count"] or 0),
+                        })
+        finally:
+            conn.close()
+        return results
+
+    def clear_chat(self, chat_id: str, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Delete canonical messages and session-scoped hot memories for one chat."""
+        if not chat_id:
+            return {"messages_removed": 0, "memories_removed": 0}
+        backend = get_backend_type()
+        conn = self._get_connection()
+        messages_removed = 0
+        memories_removed = 0
+        try:
+            if backend == "sqlite":
+                with conn:
+                    if user_id:
+                        cur = conn.execute(
+                            "DELETE FROM messages WHERE chat_id = ? AND user_id = ?;",
+                            (chat_id, user_id),
+                        )
+                    else:
+                        cur = conn.execute(
+                            "DELETE FROM messages WHERE chat_id = ?;",
+                            (chat_id,),
+                        )
+                    messages_removed = int(cur.rowcount or 0)
+                    if user_id:
+                        cur = conn.execute(
+                            """
+                            DELETE FROM memories
+                            WHERE source_chat_id = ? AND user_id = ? AND memory_tier = 'hot';
+                            """,
+                            (chat_id, user_id),
+                        )
+                    else:
+                        cur = conn.execute(
+                            """
+                            DELETE FROM memories
+                            WHERE source_chat_id = ? AND memory_tier = 'hot';
+                            """,
+                            (chat_id,),
+                        )
+                    memories_removed = int(cur.rowcount or 0)
+            else:
+                with conn:
+                    with conn.cursor() as cur:
+                        if user_id:
+                            cur.execute(
+                                "DELETE FROM messages WHERE chat_id = %s AND user_id = %s;",
+                                (chat_id, user_id),
+                            )
+                        else:
+                            cur.execute(
+                                "DELETE FROM messages WHERE chat_id = %s;",
+                                (chat_id,),
+                            )
+                        messages_removed = int(cur.rowcount or 0)
+                        if user_id:
+                            cur.execute(
+                                """
+                                DELETE FROM memories
+                                WHERE source_chat_id = %s AND user_id = %s AND memory_tier = 'hot';
+                                """,
+                                (chat_id, user_id),
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                DELETE FROM memories
+                                WHERE source_chat_id = %s AND memory_tier = 'hot';
+                                """,
+                                (chat_id,),
+                            )
+                        memories_removed = int(cur.rowcount or 0)
+        finally:
+            conn.close()
+        return {
+            "messages_removed": messages_removed,
+            "memories_removed": memories_removed,
+        }
+
     # ── Phase 2 & Phase 7: Global Facts / Durable Memory Operations ─────────
 
     def touch_memory_access(self, memory_id: str) -> bool:
@@ -495,6 +699,8 @@ class SageMemory:
         tier = (memory_tier or "cold").lower().strip()
         if tier not in ALLOWED_TIERS:
             raise ValueError(f"Invalid memory_tier '{memory_tier}'. Allowed tiers: {sorted(list(ALLOWED_TIERS))}")
+        if tier == "hot" and not (source_chat_id and str(source_chat_id).strip()):
+            raise ValueError("source_chat_id is required for session-scoped hot memory.")
 
         memory_id = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -555,6 +761,7 @@ class SageMemory:
             "updated_at": now_iso,
         }
         _sync_index_store(res)
+        self.log_activity("STORE", user_id=res["user_id"], memory_id=res["memory_id"], chat_id=res.get("source_chat_id"), details=f"Tier: {res['memory_tier']}, Category: {res['category']}")
         return res
 
     def get_memory(self, memory_id: str, touch_access: bool = False) -> Optional[Dict[str, Any]]:
@@ -643,9 +850,10 @@ class SageMemory:
         category: Optional[str] = None,
         memory_tier: Optional[str] = None,
         chat_id: Optional[str] = None,
+        status: Optional[str] = "active",
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """List active memories for user_id with optional category, tier, and chat_id filters.
+        """List memories for user_id with optional category, tier, status, and chat_id filters.
 
         Ordered deterministically by importance DESC, updated_at DESC, memory_id DESC.
         """
@@ -668,9 +876,13 @@ class SageMemory:
                        source_chat_id, source_msg_id, status, supersedes_memory_id,
                        memory_tier, last_accessed_at, created_at, updated_at
                 FROM memories
-                WHERE user_id = {ph} AND status = 'active'
+                WHERE user_id = {ph}
             """
             params: List[Any] = [user_id.strip()]
+
+            if status:
+                base_sql += " AND status = {ph}"
+                params.append(status.strip().lower())
 
             if cat_filter:
                 base_sql += " AND category = {ph}"
@@ -769,6 +981,7 @@ class SageMemory:
         updated = self.get_memory(memory_id)
         if updated:
             _sync_index_store(updated)
+            self.log_activity("UPDATE", user_id=existing["user_id"], memory_id=memory_id, chat_id=existing.get("source_chat_id"), details=f"Category: {new_category}")
         return updated
 
     def delete_memory(self, memory_id: str) -> bool:
@@ -807,6 +1020,7 @@ class SageMemory:
             conn.close()
 
         _sync_index_status(memory_id, "deleted")
+        self.log_activity("DELETE", user_id=existing["user_id"], memory_id=memory_id, chat_id=existing.get("source_chat_id"), details="Marked deleted")
         return True
 
     def supersede_memory(
@@ -930,6 +1144,7 @@ class SageMemory:
             raise RuntimeError(f"Failed to retrieve memory '{memory_id}' after promotion.")
 
         _sync_index_store(updated)
+        self.log_activity("PROMOTE", user_id=user_id, memory_id=memory_id, chat_id=updated.get("source_chat_id"), details="Promoted hot to cold")
         return updated
 
     def compact_memories(
@@ -1020,7 +1235,132 @@ class SageMemory:
         for mid in unique_ids:
             _sync_index_status(mid, "compacted")
 
+        self.log_activity("SUMMARIZE", user_id=user_id, memory_id=summary_mem["memory_id"], chat_id=expected_chat_id, details=f"Compacted {len(unique_ids)} memories")
+
         return summary_mem
+
+    def log_activity(
+        self,
+        event_type: str,
+        user_id: str,
+        memory_id: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        """Log an operational memory event (STORE, SEARCH, UPDATE, DELETE, PROMOTE, SUMMARIZE)."""
+        if not user_id:
+            user_id = config.DEFAULT_USER_ID
+        event_type = (event_type or "EVENT").upper().strip()
+        backend = get_backend_type()
+        conn = self._get_connection()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            if backend == "sqlite":
+                act_id = f"act_{uuid.uuid4().hex[:12]}"
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO memory_activity (activity_id, event_type, user_id, chat_id, memory_id, details, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?);
+                        """,
+                        (act_id, event_type, user_id, chat_id, memory_id, details, now_iso),
+                    )
+            else:
+                with conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO memory_activity (event_type, user_id, chat_id, memory_id, details, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s);
+                            """,
+                            (event_type, user_id, chat_id, memory_id, details, now_iso),
+                        )
+        except Exception as exc:
+            logger.warning("Failed to log memory activity: %s", exc)
+        finally:
+            conn.close()
+
+    def get_recent_activity(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Fetch recent memory activity events."""
+        limit = max(1, min(int(limit or 20), 100))
+        backend = get_backend_type()
+        conn = self._get_connection()
+        events = []
+        try:
+            if backend == "sqlite":
+                if user_id:
+                    cursor = conn.execute(
+                        """
+                        SELECT activity_id, event_type, user_id, chat_id, memory_id, details, created_at
+                        FROM memory_activity
+                        WHERE user_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?;
+                        """,
+                        (user_id, limit),
+                    )
+                else:
+                    cursor = conn.execute(
+                        """
+                        SELECT activity_id, event_type, user_id, chat_id, memory_id, details, created_at
+                        FROM memory_activity
+                        ORDER BY created_at DESC
+                        LIMIT ?;
+                        """,
+                        (limit,),
+                    )
+                for r in cursor.fetchall():
+                    events.append({
+                        "activity_id": str(r["activity_id"]),
+                        "event_type": str(r["event_type"]),
+                        "user_id": str(r["user_id"]),
+                        "chat_id": r["chat_id"],
+                        "memory_id": r["memory_id"],
+                        "details": r["details"],
+                        "created_at": str(r["created_at"]),
+                    })
+            else:
+                with conn.cursor() as cur:
+                    if user_id:
+                        cur.execute(
+                            """
+                            SELECT activity_id, event_type, user_id, chat_id, memory_id, details, created_at
+                            FROM memory_activity
+                            WHERE user_id = %s
+                            ORDER BY created_at DESC
+                            LIMIT %s;
+                            """,
+                            (user_id, limit),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            SELECT activity_id, event_type, user_id, chat_id, memory_id, details, created_at
+                            FROM memory_activity
+                            ORDER BY created_at DESC
+                            LIMIT %s;
+                            """,
+                            (limit,),
+                        )
+                    for r in cur.fetchall():
+                        events.append({
+                            "activity_id": str(r[0]),
+                            "event_type": str(r[1]),
+                            "user_id": str(r[2]),
+                            "chat_id": r[3],
+                            "memory_id": r[4],
+                            "details": r[5],
+                            "created_at": str(r[6]),
+                        })
+        except Exception as exc:
+            logger.warning("Failed to fetch memory activity: %s", exc)
+        finally:
+            conn.close()
+        return events
 
     def reindex_memories(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Reindex active canonical memories from PostgreSQL/SQLite into Chroma vector store."""

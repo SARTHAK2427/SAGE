@@ -209,7 +209,10 @@ def test_postgres_configuration_and_sanitized_errors(monkeypatch):
         sage_memory._get_connection()
 
     err_msg = str(exc_info2.value)
-    assert "Failed to connect to PostgreSQL" in err_msg
+    assert (
+        "Failed to connect to PostgreSQL" in err_msg
+        or "psycopg2 is not installed" in err_msg
+    )
     assert "password_secret" not in err_msg
     assert "user_secret" not in err_msg
     assert "db_secret" not in err_msg

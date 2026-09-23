@@ -214,14 +214,80 @@ document.addEventListener('DOMContentLoaded', () => {
     // ══════════════════════════════════════════════════
     // SETTINGS PANEL
     // ══════════════════════════════════════════════════
-    settingsBtn?.addEventListener('click', () => settingsPanel.classList.toggle('open'));
+    const SETTINGS_KEY = 'sage_ui_settings_v1';
+    const settingTheme = document.getElementById('settingTheme');
+    const settingFontSize = document.getElementById('settingFontSize');
+    const settingDefaultModel = document.getElementById('settingDefaultModel');
+    const settingTemperature = document.getElementById('settingTemperature');
+    const settingSaveHistory = document.getElementById('settingSaveHistory');
+    const settingTelemetry = document.getElementById('settingTelemetry');
+
+    const uiSettings = {
+        theme: 'light',
+        fontSize: 'medium',
+        defaultModel: 'auto',
+        temperature: '0.7',
+        saveHistory: true,
+        telemetry: false,
+    };
+
+    function loadUiSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            Object.assign(uiSettings, parsed || {});
+        } catch { /* keep defaults */ }
+    }
+
+    function persistUiSettings() {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings));
+    }
+
+    function resolveTheme(theme) {
+        if (theme === 'system') {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        return theme === 'dark' ? 'dark' : 'light';
+    }
+
+    function applyUiSettings() {
+        document.documentElement.setAttribute('data-theme', resolveTheme(uiSettings.theme));
+        document.documentElement.setAttribute('data-font-size', uiSettings.fontSize || 'medium');
+        if (settingTheme) settingTheme.value = uiSettings.theme;
+        if (settingFontSize) settingFontSize.value = uiSettings.fontSize;
+        if (settingDefaultModel) settingDefaultModel.value = uiSettings.defaultModel;
+        if (settingTemperature) settingTemperature.value = String(uiSettings.temperature);
+        if (settingSaveHistory) settingSaveHistory.checked = !!uiSettings.saveHistory;
+        if (settingTelemetry) settingTelemetry.checked = !!uiSettings.telemetry;
+    }
+
+    function syncSetting(key, value) {
+        uiSettings[key] = value;
+        persistUiSettings();
+        applyUiSettings();
+    }
+
+    loadUiSettings();
+    applyUiSettings();
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (uiSettings.theme === 'system') applyUiSettings();
+    });
+
+    settingTheme?.addEventListener('change', () => syncSetting('theme', settingTheme.value));
+    settingFontSize?.addEventListener('change', () => syncSetting('fontSize', settingFontSize.value));
+    settingDefaultModel?.addEventListener('change', () => syncSetting('defaultModel', settingDefaultModel.value));
+    settingTemperature?.addEventListener('change', () => syncSetting('temperature', settingTemperature.value));
+    settingSaveHistory?.addEventListener('change', () => syncSetting('saveHistory', !!settingSaveHistory.checked));
+    settingTelemetry?.addEventListener('change', () => syncSetting('telemetry', !!settingTelemetry.checked));
+
+    // Settings opens the appearance/privacy drawer. Flash runtime has its own button.
+    settingsBtn?.addEventListener('click', () => settingsPanel?.classList.toggle('open'));
     closeSettingsBtn?.addEventListener('click', () => settingsPanel.classList.remove('open'));
     if (window.location.hash === '#settings') settingsPanel?.classList.add('open');
 
     // FLASH RUNTIME CONTROL CENTER
     const flashPrimaryRemoteFields = document.getElementById('flashPrimaryRemoteFields');
-    const flashMemoryRemoteFields = document.getElementById('flashMemoryRemoteFields');
-    const flashMemoryProvider = document.getElementById('flashMemoryProvider');
     const flashRuntimeStatus = document.getElementById('flashRuntimeStatus');
     const flashApplyBtn = document.getElementById('flashApplyBtn');
     const flashTestBtn = document.getElementById('flashTestBtn');
@@ -274,8 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function useSuggestedFlashModelIds(roles) {
         const fields = {
             gemma: document.getElementById('flashGemmaModelId'),
-            qwen: document.getElementById('flashQwenModelId'),
-            memory: document.getElementById('flashMemoryModelId')
+            qwen: document.getElementById('flashQwenModelId')
         };
         const changed = [];
         (roles || []).forEach(role => {
@@ -293,24 +358,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function syncFlashRuntimeFields() {
         const remote = primaryProvider() === 'remote';
-        const memoryIsRemote = flashMemoryProvider?.value === 'secondary_remote';
         if (flashPrimaryRemoteFields) flashPrimaryRemoteFields.hidden = !remote;
         document.querySelectorAll('#flashPrimaryChoices .flash-choice').forEach(choice => {
             choice.classList.toggle('active', !!choice.querySelector('input:checked'));
         });
-        if (flashMemoryRemoteFields) {
-            flashMemoryRemoteFields.hidden = !memoryIsRemote;
-        }
         const deployTarget = document.getElementById('flashDeployTarget');
         const primaryOption = deployTarget?.querySelector('option[value="primary"]');
-        const memoryOption = deployTarget?.querySelector('option[value="memory"]');
         if (primaryOption) primaryOption.disabled = !remote;
-        if (memoryOption) memoryOption.disabled = !memoryIsRemote;
         if (deployTarget && deployTarget.selectedOptions[0]?.disabled) {
-            deployTarget.value = remote ? 'primary' : (memoryIsRemote ? 'memory' : 'primary');
+            deployTarget.value = 'primary';
         }
         if (flashDeployBtn) {
-            flashDeployBtn.disabled = !remote && !memoryIsRemote;
+            flashDeployBtn.disabled = !remote;
             flashDeployBtn.title = flashDeployBtn.disabled ? 'Choose a remote endpoint to deploy through its bridge.' : '';
         }
     }
@@ -341,32 +400,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function buildFlashRuntimePayload() {
         const primary = primaryProvider();
-        const memoryChoice = flashMemoryProvider?.value || 'disabled';
         const connections = [];
         const roles = {
             gemma: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashGemmaModelId')?.value.trim() || 'gemma' },
             qwen: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashQwenModelId')?.value.trim() || 'qwen' },
-            memory: { provider: 'disabled', connection_id: null, model_id: document.getElementById('flashMemoryModelId')?.value.trim() || 'memory' }
+            memory: { provider: 'disabled', connection_id: null, model_id: 'memory' }
         };
 
         if (primary === 'remote') {
             const baseUrl = document.getElementById('flashPrimaryUrl')?.value.trim();
             if (!baseUrl) throw new Error('Enter the primary remote server URL.');
             connections.push({ id: 'primary', label: 'Primary inference server', base_url: baseUrl, api_key: document.getElementById('flashPrimaryKey')?.value || '' });
-        }
-
-        if (memoryChoice === 'local_cpu') {
-            roles.memory.provider = 'local_cpu';
-        } else if (memoryChoice === 'primary_remote') {
-            if (primary !== 'remote') throw new Error('The shared remote memory option requires Gemma + Qwen to use a remote server.');
-            roles.memory.provider = 'remote';
-            roles.memory.connection_id = 'primary';
-        } else if (memoryChoice === 'secondary_remote') {
-            const baseUrl = document.getElementById('flashMemoryUrl')?.value.trim();
-            if (!baseUrl) throw new Error('Enter the separate memory server URL.');
-            connections.push({ id: 'memory', label: 'Memory server', base_url: baseUrl, api_key: document.getElementById('flashMemoryKey')?.value || '' });
-            roles.memory.provider = 'remote';
-            roles.memory.connection_id = 'memory';
         }
         return { connections, roles };
     }
@@ -412,6 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const summary = document.getElementById('flashSettingsSummary');
         if (summary) summary.textContent = primaryProvider() === 'remote' ? 'Remote GPU active for this session' : 'Local RTX active for this session';
         if (!quiet) flashStatus('success', 'Runtime applied', 'Configuration lives in memory only and clears when SAGE restarts.');
+        refreshRuntimeReadiness();
         return data;
     }
 
@@ -420,8 +465,48 @@ document.addEventListener('DOMContentLoaded', () => {
     flashRuntimeBackdrop?.addEventListener('click', () => setFlashModal(false));
     if (window.location.hash === '#flash-runtime') setFlashModal(true);
     document.querySelectorAll('input[name="flashPrimaryProvider"]').forEach(input => input.addEventListener('change', syncFlashRuntimeFields));
-    flashMemoryProvider?.addEventListener('change', syncFlashRuntimeFields);
     syncFlashRuntimeFields();
+
+    async function refreshRuntimeReadiness() {
+        let banner = document.getElementById('runtimeBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'runtimeBanner';
+            banner.className = 'runtime-banner';
+            chatMain?.appendChild(banner);
+        }
+        try {
+            const res = await fetch('/api/flash/status');
+            const data = await res.json();
+            const readiness = data.readiness || {};
+            const runtime = data.runtime || {};
+            const roles = runtime.roles || {};
+            const usesRemote = Object.values(roles).some(role => role && role.provider === 'remote');
+            const summary = document.getElementById('flashSettingsSummary');
+            if (readiness.mock_mode && !usesRemote) {
+                if (summary) summary.textContent = 'Mock inference active (no local GGUF required)';
+                banner.innerHTML = 'Running in mock mode so Flash works without local models. Configure a remote GPU or install llama-server + GGUF files for real inference. <button type="button" id="runtimeBannerOpen">Open runtime</button>';
+                banner.classList.add('show');
+            } else if (usesRemote) {
+                banner.classList.remove('show');
+                if (summary) summary.textContent = 'Remote GPU active for this session';
+            } else if (!readiness.local_inference_ready && !runtime.configured) {
+                if (summary) summary.textContent = 'Local models missing — configure runtime';
+                const missing = (readiness.missing_model_files || []).slice(0, 2).join(', ');
+                banner.innerHTML = `Local inference is not ready${missing ? ` (missing: ${esc(missing)})` : ''}. Open Settings → Flash runtime to use a remote GPU, or set LLAMA_SERVER_PATH and MODEL_DIR. <button type="button" id="runtimeBannerOpen">Open runtime</button>`;
+                banner.classList.add('show');
+            } else {
+                banner.classList.remove('show');
+                if (summary && runtime.configured) {
+                    summary.textContent = 'Local RTX active for this session';
+                }
+            }
+            document.getElementById('runtimeBannerOpen')?.addEventListener('click', () => setFlashModal(true));
+        } catch {
+            banner.classList.remove('show');
+        }
+    }
+    refreshRuntimeReadiness();
 
     flashApplyBtn?.addEventListener('click', async () => {
         flashApplyBtn.disabled = true;
@@ -1678,38 +1763,156 @@ document.addEventListener('DOMContentLoaded', () => {
     // ══════════════════════════════════════════════════
     // HISTORY & DELETE
     // ══════════════════════════════════════════════════
+    const historyList = document.getElementById('historyList');
+
+    function formatHistoryTime(iso) {
+        if (!iso) return '';
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return String(iso).slice(0, 16);
+        const now = new Date();
+        const sameDay = date.toDateString() === now.toDateString();
+        const yesterday = new Date(now);
+        yesterday.setDate(now.getDate() - 1);
+        const time = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+        if (sameDay) return 'Today · ' + time;
+        if (date.toDateString() === yesterday.toDateString()) return 'Yesterday · ' + time;
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + time;
+    }
+
+    function createHistoryItem(chat, { active = false } = {}) {
+        const item = document.createElement('div');
+        item.className = 'history-item' + (active ? ' active' : '');
+        item.dataset.chatId = chat.chat_id;
+        item.innerHTML = `
+            <div class="h-text">
+                <span class="h-title">${esc(chat.title || 'New conversation')}</span>
+                <span class="h-time">${esc(formatHistoryTime(chat.updated_at || chat.created_at))}</span>
+            </div>
+            <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+        `;
+        initHistoryItem(item);
+        return item;
+    }
+
+    function renderHistoryEmpty() {
+        if (!historyList) return;
+        historyList.innerHTML = '<div class="history-empty">No saved chats yet. Start a conversation to keep it here.</div>';
+    }
+
+    async function loadChatHistory() {
+        if (!historyList || !uiSettings.saveHistory) {
+            if (historyList) renderHistoryEmpty();
+            return;
+        }
+        try {
+            const res = await fetch('/api/chats');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to load chats');
+            const chats = data.chats || [];
+            historyList.innerHTML = '';
+            if (!chats.length) {
+                renderHistoryEmpty();
+                return;
+            }
+            chats.forEach(chat => {
+                historyList.appendChild(createHistoryItem(chat, {
+                    active: chat.chat_id === flashSessionId || chat.chat_id === currentChatId
+                }));
+            });
+        } catch (error) {
+            console.warn('Chat history unavailable:', error);
+            renderHistoryEmpty();
+        }
+    }
+
+    function upsertHistoryItem(chatId, title) {
+        if (!historyList || !uiSettings.saveHistory || !chatId) return;
+        historyList.querySelector('.history-empty')?.remove();
+        let item = historyList.querySelector(`.history-item[data-chat-id="${CSS.escape(chatId)}"]`);
+        if (!item) {
+            item = createHistoryItem({
+                chat_id: chatId,
+                title: title || 'New conversation',
+                updated_at: new Date().toISOString(),
+            }, { active: true });
+            historyList.insertBefore(item, historyList.firstChild);
+        } else {
+            const titleEl = item.querySelector('.h-title');
+            const timeEl = item.querySelector('.h-time');
+            if (titleEl && title) titleEl.textContent = title;
+            if (timeEl) timeEl.textContent = formatHistoryTime(new Date().toISOString());
+            historyList.insertBefore(item, historyList.firstChild);
+        }
+        document.querySelectorAll('.history-item').forEach(i => i.classList.toggle('active', i === item));
+    }
+
+    async function openChatFromHistory(chatId) {
+        if (!chatId || isRunning) return;
+        try {
+            const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Could not load chat');
+            resetChat({ keepHistorySelection: true, newSession: false });
+            flashSessionId = chatId;
+            currentChatId = chatId;
+            // If the Memory Vault is currently open, refresh its recent-chat context
+            // to reflect the newly selected chat session.
+            if (memoryVaultView && memoryVaultView.style.display !== 'none') {
+                refreshMemoryVaultData();
+            }
+            document.querySelectorAll('.history-item').forEach(i => {
+                i.classList.toggle('active', i.dataset.chatId === chatId);
+            });
+            const messages = data.messages || [];
+            if (!messages.length) {
+                showComposerNotice('This chat has no saved messages.');
+                return;
+            }
+            activateChat();
+            welcomeOverlay.style.display = 'none';
+            messages.forEach(msg => {
+                if (msg.role === 'user') appendUserMsg(msg.content || '', []);
+                else if (msg.role === 'assistant') appendSageReply(msg.content || '', null);
+            });
+            positionInput(false);
+        } catch (error) {
+            showComposerNotice(error.message || 'Failed to open chat');
+        }
+    }
+
     function initHistoryItem(item) {
         if (!item || item.dataset.bound) return;
         item.dataset.bound = 'true';
 
         item.addEventListener('click', (e) => {
             if (e.target.closest('.h-del-btn')) return;
-            document.querySelectorAll('.history-item').forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
+            const chatId = item.dataset.chatId;
+            if (chatId) openChatFromHistory(chatId);
         });
 
         const delBtn = item.querySelector('.h-del-btn');
-        delBtn?.addEventListener('click', (e) => {
+        delBtn?.addEventListener('click', async (e) => {
             e.preventDefault();
             e.stopPropagation();
+            const chatId = item.dataset.chatId;
             const wasActive = item.classList.contains('active');
             item.style.opacity = '0';
             item.style.transform = 'translateX(-12px)';
             item.style.pointerEvents = 'none';
+            try {
+                if (chatId) {
+                    await fetch(`/api/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
+                }
+            } catch { /* UI still removes the row */ }
             setTimeout(() => {
                 item.remove();
-                if (wasActive) {
-                    const firstRemaining = document.querySelector('.history-item');
-                    if (firstRemaining) {
-                        firstRemaining.classList.add('active');
-                    } else {
-                        resetChat();
-                    }
-                }
+                if (!historyList.querySelector('.history-item')) renderHistoryEmpty();
+                if (wasActive) resetChat();
             }, 180);
         });
     }
-    document.querySelectorAll('.history-item').forEach(initHistoryItem);
 
     searchInput?.addEventListener('input', () => {
         const q = searchInput.value.toLowerCase();
@@ -1719,27 +1922,32 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    loadChatHistory();
+
     // ══════════════════════════════════════════════════
     // NEW CHAT — reset to initial centered state
     // ══════════════════════════════════════════════════
-    newChatBtn?.addEventListener('click', resetChat);
+    newChatBtn?.addEventListener('click', () => resetChat());
     resetChatInlineBtn?.addEventListener('click', async () => {
         if (isRunning) return;
         const sessionToClear = flashSessionId;
-        document.querySelector('.history-item.active')?.remove();
-        resetChat();
         try {
             await fetch(`/api/flash/session/${encodeURIComponent(sessionToClear)}`, { method: 'DELETE' });
         } catch {
-            // The visible session is still reset even if no background memory existed.
+            // The visible session is still reset even if persistence is unavailable.
         }
+        document.querySelector(`.history-item[data-chat-id="${CSS.escape(sessionToClear)}"]`)?.remove();
+        if (!historyList?.querySelector('.history-item')) renderHistoryEmpty();
+        resetChat();
         showComposerNotice('Chat session cleared.');
     });
-    function resetChat() {
+    function resetChat({ keepHistorySelection = false, newSession = true } = {}) {
         currentChatId = null;
         chatMessages.innerHTML = '';
         chatActive = false;
-        flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
+        if (newSession) {
+            flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
+        }
 
         // Restore welcome overlay
         welcomeOverlay.style.display = '';
@@ -1761,7 +1969,9 @@ document.addEventListener('DOMContentLoaded', () => {
         promptInput.style.height = 'auto';
         hideCardStatus();
 
-        document.querySelectorAll('.history-item').forEach(i => i.classList.remove('active'));
+        if (!keepHistorySelection) {
+            document.querySelectorAll('.history-item').forEach(i => i.classList.remove('active'));
+        }
 
         // Reset execution tiles to idle and empty state
         clearExecTiles();
@@ -2642,30 +2852,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const isFirstMessage = !chatActive;
         const pendingText = text;
         const pendingFiles = [...attachedFiles];
-
-        // Add to history list if starting a new chat
-        const activeHistory = document.querySelector('.history-item.active');
-        if (!activeHistory) {
-            const hList = document.getElementById('historyList');
-            if (hList) {
-                const newItem = document.createElement('div');
-                newItem.className = 'history-item active';
-                const now = new Date();
-                const timeStr = 'Today · ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-                const titleStr = text || (attachedFiles[0]?.name ? 'File: ' + attachedFiles[0].name : 'New conversation');
-                newItem.innerHTML = `
-                    <div class="h-text">
-                        <span class="h-title">${esc(titleStr)}</span>
-                        <span class="h-time">${timeStr}</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                `;
-                initHistoryItem(newItem);
-                hList.insertBefore(newItem, hList.firstChild);
-            }
-        }
+        const historyTitle = text || (attachedFiles[0]?.name ? 'File: ' + attachedFiles[0].name : 'New conversation');
 
         isRunning = true;
         sendBtn.disabled = true;
@@ -2676,6 +2863,8 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('objective', text || 'Analyze the attached files.');
         if (activeChatMode === 'flash') {
             formData.append('session_id', flashSessionId);
+            formData.append('temperature', String(uiSettings.temperature || '0.7'));
+            formData.append('save_history', uiSettings.saveHistory ? '1' : '0');
         } else if (currentChatId) {
             formData.append('chat_id', currentChatId);
         }
@@ -2779,6 +2968,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data && data.chat_id) {
                 currentChatId = data.chat_id;
             }
+            if (uiSettings.saveHistory && data?.status !== 'error') {
+                upsertHistoryItem(data.session_id || data.chat_id || flashSessionId, historyTitle);
+            }
             if (thinking) thinking.remove();
             clearExecTimers();
             hideCardStatus();
@@ -2856,7 +3048,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     actor: 'SAGE Orchestrator',
                     actorClass: 'tool',
                     action: data.flash_case === 'C' ? 'Request Complete After Synthesis' : 'Request Complete',
-                    detail: data.memory_job ? 'End-to-end request complete. Background memory compression queued.' : 'End-to-end request complete; this tile is not a model call.',
+                    detail: 'End-to-end request complete; this tile is not a model call.',
                     status: 'done',
                     duration: wallTime,
                     location: 'TOTAL'
@@ -2949,7 +3141,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function appendSageReply(answer, telemetry) {
         const msg = document.createElement('div'); msg.className = 'chat-msg sage fade-in';
         const hdr = document.createElement('div'); hdr.className = 'msg-hdr';
-        const t = telemetry ? ' \u00B7 ' + telemetry.total_wall_time?.toFixed(1) + 's' : '';
+        const showTelemetry = uiSettings.telemetry && telemetry?.total_wall_time != null;
+        const t = showTelemetry ? ' \u00B7 ' + Number(telemetry.total_wall_time).toFixed(1) + 's' : '';
         hdr.textContent = 'SAGE' + t;
         const bub = document.createElement('div'); bub.className = 'msg-bub';
         bub.innerHTML = fmtMd(answer);
@@ -2989,65 +3182,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ══════════════════════════════════════════════════
-    // SAGE MEMORY VAULT CONTROLLER
+    // SAGE MEMORY VAULT CONTROLLER — REAL BACKEND INTEGRATION
     // ══════════════════════════════════════════════════
-    const SEED_MEMORIES = [
-        {
-            id: 'mem_h1',
-            type: 'hot',
-            category: 'task',
-            content: 'Implementing Phase 2 canonical memory store CRUD operations.',
-            updated: '3m ago',
-            timestamp: Date.now() - 3 * 60 * 1000
-        },
-        {
-            id: 'mem_h2',
-            type: 'hot',
-            category: 'decision',
-            content: 'Default embedding model confirmed as all-MiniLM-L6-v2.',
-            updated: '18m ago',
-            timestamp: Date.now() - 18 * 60 * 1000
-        },
-        {
-            id: 'mem_c1',
-            type: 'cold',
-            category: 'preference',
-            content: 'Prefers FastAPI for backend development, specifically over Flask for asynchronous APIs.',
-            updated: '2h ago',
-            timestamp: Date.now() - 2 * 3600 * 1000
-        },
-        {
-            id: 'mem_c2',
-            type: 'cold',
-            category: 'personal',
-            content: "The user's name is Ojasvi.",
-            updated: '1d ago',
-            timestamp: Date.now() - 24 * 3600 * 1000
-        }
-    ];
-
-    let sageMemories = (() => {
-        try {
-            const saved = localStorage.getItem('sage_memories');
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-            }
-        } catch (e) {}
-        return [...SEED_MEMORIES];
-    })();
-
-    function persistSageMemories() {
-        try {
-            localStorage.setItem('sage_memories', JSON.stringify(sageMemories));
-        } catch (e) {}
-    }
-
-    let mvCurrentTab = 'hot';
+    let mvMemories = [];
+    let mvDerivedMemories = [];
+    let mvRecentMessages = [];
+    let mvActivities = [];
+    let mvCurrentTab = 'vault'; // 'vault' | 'recent' | 'derived' | 'activity'
     let mvCurrentCategory = 'all';
     let mvSearchQuery = '';
     let mvActiveEditingId = null;
     let mvInitialized = false;
+    let mvIsLoading = false;
 
     function getMvTagClass(cat) {
         const c = (cat || '').toLowerCase();
@@ -3058,60 +3204,225 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'personal': return 'mv-tag-personal';
             case 'project': return 'mv-tag-project';
             case 'technical': return 'mv-tag-technical';
+            case 'fact': return 'mv-tag-fact';
             default: return 'mv-tag-summary';
         }
     }
 
+    function formatTimeAgo(dateStr) {
+        if (!dateStr) return 'Just now';
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return String(dateStr);
+            const diffMs = Date.now() - d.getTime();
+            const diffMins = Math.floor(diffMs / 60000);
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+            const diffDays = Math.floor(diffHours / 24);
+            return `${diffDays}d ago`;
+        } catch {
+            return 'Recently';
+        }
+    }
+
+    function getActBadgeClass(action) {
+        const a = (action || '').toUpperCase();
+        switch (a) {
+            case 'STORE': return 'mv-act-store';
+            case 'SEARCH': return 'mv-act-search';
+            case 'UPDATE': return 'mv-act-update';
+            case 'DELETE': return 'mv-act-delete';
+            case 'PROMOTE': return 'mv-act-promote';
+            case 'SUMMARIZE': return 'mv-act-summarize';
+            default: return 'mv-act-store';
+        }
+    }
+
+    // ── Live Backend API Fetchers ────────────────────
+    async function fetchMemoryStatus() {
+        try {
+            const res = await fetch('/api/memory/status');
+            if (!res.ok) return;
+            const data = await res.json();
+            
+            // Database status pill
+            const dbPillText = document.getElementById('mvDbStatusText');
+            if (dbPillText && data.database) {
+                const engine = (data.database.engine || 'SQLite').toUpperCase();
+                const state = data.database.status === 'connected' ? 'Active' : 'Offline';
+                dbPillText.textContent = `${engine} · ${state}`;
+            }
+
+            // Vector Index status pill
+            const chromaText = document.getElementById('mvChromaStatusText');
+            if (chromaText && data.vector_index) {
+                const eng = data.vector_index.engine || 'Chroma';
+                const status = data.vector_index.status || 'Ready';
+                const hotCount = data.vector_index.hot_vectors || 0;
+                const coldCount = data.vector_index.cold_vectors || 0;
+                chromaText.textContent = `${eng} · ${status} (${hotCount + coldCount} vec)`;
+            }
+
+            // Embedding pill
+            const embText = document.getElementById('mvEmbStatusText');
+            if (embText && data.embedding) {
+                embText.textContent = data.embedding.model || 'all-MiniLM-L6-v2';
+            }
+
+            // Model runtime pill
+            const modelPill = document.getElementById('mvModelStatusPill');
+            if (modelPill && data.model_runtime) {
+                modelPill.title = data.model_runtime.detail || 'Model weights are not installed on this host.';
+            }
+
+            // Update badge counts if available
+            if (data.counts) {
+                const hotCountEl = document.getElementById('mvHotCount');
+                const coldCountEl = document.getElementById('mvColdCount');
+                const derivedCountEl = document.getElementById('mvDerivedCount');
+                if (hotCountEl && data.counts.hot_active !== undefined) hotCountEl.textContent = data.counts.hot_active;
+                if (coldCountEl && data.counts.cold_active !== undefined) coldCountEl.textContent = data.counts.cold_active;
+                if (derivedCountEl && data.counts.derived_compacted !== undefined) derivedCountEl.textContent = data.counts.derived_compacted;
+            }
+        } catch (e) {
+            console.warn('[MemoryVault] Status fetch failed:', e);
+        }
+    }
+
+    async function fetchMemories() {
+        try {
+            let url = '/api/memory/memories?status=active';
+            if (mvSearchQuery && mvSearchQuery.trim()) {
+                url += `&search=${encodeURIComponent(mvSearchQuery.trim())}`;
+            }
+            if (mvCurrentCategory && mvCurrentCategory !== 'all') {
+                url += `&category=${encodeURIComponent(mvCurrentCategory)}`;
+            }
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            mvMemories = Array.isArray(data.memories) ? data.memories : [];
+            mvDerivedMemories = Array.isArray(data.derived) ? data.derived : [];
+        } catch (e) {
+            console.warn('[MemoryVault] Memories fetch failed:', e);
+        }
+    }
+
+    async function fetchRecentChat() {
+        try {
+            const chatIdParam = currentChatId ? `?chat_id=${encodeURIComponent(currentChatId)}&limit=5` : '?limit=5';
+            const res = await fetch(`/api/memory/recent-chat${chatIdParam}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            mvRecentMessages = Array.isArray(data.messages) ? data.messages : [];
+            const countEl = document.getElementById('mvRecentMsgCount');
+            if (countEl) countEl.textContent = mvRecentMessages.length;
+        } catch (e) {
+            console.warn('[MemoryVault] Recent chat fetch failed:', e);
+        }
+    }
+
+    async function fetchActivityLogs() {
+        try {
+            const res = await fetch('/api/memory/activity?limit=50');
+            if (!res.ok) return;
+            const data = await res.json();
+            mvActivities = Array.isArray(data.activities) ? data.activities : [];
+            const countEl = document.getElementById('mvActivityCount');
+            if (countEl) countEl.textContent = mvActivities.length;
+        } catch (e) {
+            console.warn('[MemoryVault] Activity logs fetch failed:', e);
+        }
+    }
+
+    async function refreshMemoryVaultData(showIndicator = false) {
+        if (mvIsLoading) return;
+        mvIsLoading = true;
+        const syncBtn = document.getElementById('mvSyncBtn');
+        if (showIndicator && syncBtn) {
+            syncBtn.style.opacity = '0.6';
+            syncBtn.style.pointerEvents = 'none';
+        }
+
+        try {
+            await Promise.all([
+                fetchMemoryStatus(),
+                fetchMemories(),
+                fetchRecentChat(),
+                fetchActivityLogs()
+            ]);
+            renderCurrentView();
+        } finally {
+            mvIsLoading = false;
+            if (syncBtn) {
+                syncBtn.style.opacity = '';
+                syncBtn.style.pointerEvents = '';
+            }
+        }
+    }
+
     function updateMvCounters() {
-        const hotCount = sageMemories.filter(m => m.type === 'hot').length;
-        const coldCount = sageMemories.filter(m => m.type === 'cold').length;
+        const hotCount = mvMemories.filter(m => (m.memory_tier || m.type) === 'hot').length;
+        const coldCount = mvMemories.filter(m => (m.memory_tier || m.type) === 'cold').length;
         const hotCountEl = document.getElementById('mvHotCount');
         const coldCountEl = document.getElementById('mvColdCount');
         if (hotCountEl) hotCountEl.textContent = hotCount;
         if (coldCountEl) coldCountEl.textContent = coldCount;
+        const derivedCountEl = document.getElementById('mvDerivedCount');
+        if (derivedCountEl) derivedCountEl.textContent = mvDerivedMemories.length;
+        const recentCountEl = document.getElementById('mvRecentMsgCount');
+        if (recentCountEl) recentCountEl.textContent = mvRecentMessages.length;
+        const activityCountEl = document.getElementById('mvActivityCount');
+        if (activityCountEl) activityCountEl.textContent = mvActivities.length;
     }
 
     function createMvCardElement(item) {
+        const id = item.memory_id || item.id;
         const card = document.createElement('div');
         card.className = 'mv-card';
-        card.id = `mv_card_${item.id}`;
+        card.id = `mv_card_${id}`;
 
-        const isEditing = (mvActiveEditingId === item.id);
+        const isEditing = (mvActiveEditingId === id);
+        const timeAgo = formatTimeAgo(item.updated_at || item.created_at);
+        const tier = item.memory_tier || item.type || 'cold';
+        const category = (item.category || 'fact').toLowerCase();
 
         if (isEditing) {
             card.innerHTML = `
                 <div class="mv-card-header">
                     <div class="mv-card-header-left">
-                        <span class="mv-tag ${getMvTagClass(item.category)}">${item.category.toUpperCase()}</span>
-                        <span class="mv-card-time">${item.updated}</span>
+                        <span class="mv-tag ${getMvTagClass(category)}">${category.toUpperCase()}</span>
+                        <span class="mv-card-time">${esc(timeAgo)}</span>
                     </div>
-                    <span class="mv-card-id">id: ${item.id}</span>
+                    <span class="mv-card-id">id: ${esc(id)}</span>
                 </div>
                 <div class="mv-edit-box">
-                    <textarea class="mv-edit-textarea" id="mv_edit_ta_${item.id}">${esc(item.content)}</textarea>
+                    <textarea class="mv-edit-textarea" id="mv_edit_ta_${esc(id)}">${esc(item.content)}</textarea>
                     <div class="mv-edit-actions">
-                        <button class="mv-btn-cancel-edit" onclick="window.mvCancelEdit('${item.id}')" title="Discard changes (Esc)">Cancel</button>
-                        <button class="mv-btn-save-edit" onclick="window.mvSaveEdit('${item.id}')" title="Save changes">Save Changes</button>
+                        <button class="mv-btn-cancel-edit" onclick="window.mvCancelEdit('${esc(id)}')" title="Discard changes (Esc)">Cancel</button>
+                        <button class="mv-btn-save-edit" onclick="window.mvSaveEdit('${esc(id)}')" title="Save changes">Save Changes</button>
                     </div>
                 </div>
             `;
         } else {
-            const promoteHtml = (item.type === 'hot')
-                ? `<button class="mv-btn mv-btn-promote" onclick="window.mvPromote('${item.id}')" title="Promote to persistent cold memory">Promote to Cold &nearr;</button>`
+            const promoteHtml = (tier === 'hot')
+                ? `<button class="mv-btn mv-btn-promote" onclick="window.mvPromote('${esc(id)}')" title="Promote to persistent cold memory">Promote to Cold &nearr;</button>`
                 : ``;
 
             card.innerHTML = `
                 <div class="mv-card-header">
                     <div class="mv-card-header-left">
-                        <span class="mv-tag ${getMvTagClass(item.category)}">${item.category.toUpperCase()}</span>
-                        <span class="mv-card-time">${item.updated}</span>
+                        <span class="mv-tag ${getMvTagClass(category)}">${category.toUpperCase()}</span>
+                        <span class="mv-card-time">${esc(timeAgo)}</span>
                     </div>
-                    <span class="mv-card-id">id: ${item.id}</span>
+                    <span class="mv-card-id">id: ${esc(id)}</span>
                 </div>
                 <div class="mv-card-body">${esc(item.content)}</div>
                 <div class="mv-card-toolbar">
-                    <button class="mv-btn" onclick="window.mvStartEdit('${item.id}')" title="Edit content">Edit</button>
-                    <button class="mv-btn mv-btn-delete" onclick="window.mvDelete('${item.id}')" title="Delete record">Delete</button>
+                    <button class="mv-btn" onclick="window.mvStartEdit('${esc(id)}')" title="Edit content">Edit</button>
+                    <button class="mv-btn mv-btn-delete" onclick="window.mvDelete('${esc(id)}')" title="Delete record">Delete</button>
                     ${promoteHtml}
                 </div>
             `;
@@ -3119,28 +3430,29 @@ document.addEventListener('DOMContentLoaded', () => {
         return card;
     }
 
-    function renderMvCards() {
+    function renderMvVaultCards() {
         updateMvCounters();
         const hotStack = document.getElementById('mvHotCardsStack');
         const coldStack = document.getElementById('mvColdCardsStack');
         if (!hotStack || !coldStack) return;
 
         const filterFn = (item) => {
-            if (mvCurrentCategory !== 'all' && item.category.toLowerCase() !== mvCurrentCategory.toLowerCase()) {
+            const cat = (item.category || '').toLowerCase();
+            if (mvCurrentCategory !== 'all' && cat !== mvCurrentCategory.toLowerCase()) {
                 return false;
             }
             if (mvSearchQuery.trim() !== '') {
                 const q = mvSearchQuery.toLowerCase().trim();
                 const inContent = (item.content || '').toLowerCase().includes(q);
-                const inCat = (item.category || '').toLowerCase().includes(q);
-                const inId = (item.id || '').toLowerCase().includes(q);
+                const inCat = cat.includes(q);
+                const inId = String(item.memory_id || item.id || '').toLowerCase().includes(q);
                 if (!inContent && !inCat && !inId) return false;
             }
             return true;
         };
 
-        const hotItems = sageMemories.filter(m => m.type === 'hot' && filterFn(m));
-        const coldItems = sageMemories.filter(m => m.type === 'cold' && filterFn(m));
+        const hotItems = mvMemories.filter(m => (m.memory_tier || m.type) === 'hot' && filterFn(m));
+        const coldItems = mvMemories.filter(m => (m.memory_tier || m.type) === 'cold' && filterFn(m));
 
         // Render Hot Items
         hotStack.innerHTML = '';
@@ -3169,10 +3481,133 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Global helper methods for inline card events
+    function renderMvRecentMsgs() {
+        const stack = document.getElementById('mvRecentMsgsStack');
+        if (!stack) return;
+        stack.innerHTML = '';
+
+        if (!mvRecentMessages || mvRecentMessages.length === 0) {
+            stack.innerHTML = `
+                <div class="mv-empty-state">
+                    <div class="mv-empty-title">No Recent Messages Found</div>
+                    <div class="mv-empty-desc">Start a conversation in the Chat tab to populate the chronological 5-message context window.</div>
+                </div>
+            `;
+            return;
+        }
+
+        mvRecentMessages.forEach(msg => {
+            const role = (msg.role || 'user').toLowerCase();
+            const roleClass = role === 'user' ? 'mv-role-user' : 'mv-role-assistant';
+            const card = document.createElement('div');
+            card.className = 'mv-recent-card';
+            card.innerHTML = `
+                <div class="mv-recent-head">
+                    <span class="mv-role-badge ${roleClass}">${esc(role.toUpperCase())}</span>
+                    <span class="mv-recent-time">${esc(formatTimeAgo(msg.created_at))}</span>
+                </div>
+                <div class="mv-recent-body">${esc(msg.content || '')}</div>
+            `;
+            stack.appendChild(card);
+        });
+    }
+
+    function renderMvDerivedCards() {
+        const stack = document.getElementById('mvDerivedCardsStack');
+        if (!stack) return;
+        stack.innerHTML = '';
+
+        if (!mvDerivedMemories || mvDerivedMemories.length === 0) {
+            stack.innerHTML = `
+                <div class="mv-empty-state">
+                    <div class="mv-empty-title">No Derived Memories Found</div>
+                    <div class="mv-empty-desc">Summarized representations generated from conversation history or compacted hot memories will appear here.</div>
+                </div>
+            `;
+            return;
+        }
+
+        mvDerivedMemories.forEach(item => {
+            stack.appendChild(createMvCardElement(item));
+        });
+    }
+
+    function renderMvActivities() {
+        const stream = document.getElementById('mvActivityStream');
+        if (!stream) return;
+        stream.innerHTML = '';
+
+        if (!mvActivities || mvActivities.length === 0) {
+            stream.innerHTML = `
+                <div class="mv-empty-state">
+                    <div class="mv-empty-title">No Activity Events Recorded</div>
+                    <div class="mv-empty-desc">Memory store, search, update, delete, and promotion events are recorded here in real time.</div>
+                </div>
+            `;
+            return;
+        }
+
+        mvActivities.forEach(act => {
+            const card = document.createElement('div');
+            card.className = 'mv-activity-card';
+            const action = (act.action || 'EVENT').toUpperCase();
+            const badgeClass = getActBadgeClass(action);
+            card.innerHTML = `
+                <div class="mv-activity-left">
+                    <span class="mv-act-badge ${badgeClass}">${esc(action)}</span>
+                    <span class="mv-act-details">${esc(act.details || '')}</span>
+                </div>
+                <span class="mv-act-time">${esc(formatTimeAgo(act.created_at))}</span>
+            `;
+            stream.appendChild(card);
+        });
+    }
+
+    function renderCurrentView() {
+        updateMvCounters();
+        if (mvCurrentTab === 'vault') {
+            renderMvVaultCards();
+        } else if (mvCurrentTab === 'recent') {
+            renderMvRecentMsgs();
+        } else if (mvCurrentTab === 'derived') {
+            renderMvDerivedCards();
+        } else if (mvCurrentTab === 'activity') {
+            renderMvActivities();
+        }
+    }
+
+    function switchMvSubnav(viewName) {
+        mvCurrentTab = viewName;
+        // Update subnav buttons active state
+        document.querySelectorAll('#mvSubnavPills .mv-subnav-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === viewName);
+        });
+
+        // Hide all views
+        const views = {
+            vault: document.getElementById('mvViewVault'),
+            recent: document.getElementById('mvViewRecent'),
+            derived: document.getElementById('mvViewDerived'),
+            activity: document.getElementById('mvViewActivity'),
+        };
+
+        Object.entries(views).forEach(([name, el]) => {
+            if (el) {
+                if (name === 'vault') {
+                    el.style.display = (name === viewName) ? 'grid' : 'none';
+                } else {
+                    el.style.display = (name === viewName) ? 'flex' : 'none';
+                }
+            }
+        });
+
+        renderCurrentView();
+    }
+
+    // ── Global Helper Methods for Inline Card Events ──
     window.mvStartEdit = function(id) {
         mvActiveEditingId = id;
-        renderMvCards();
+        renderCurrentView();
         setTimeout(() => {
             const ta = document.getElementById(`mv_edit_ta_${id}`);
             if (ta) {
@@ -3184,41 +3619,70 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.mvCancelEdit = function() {
         mvActiveEditingId = null;
-        renderMvCards();
+        renderCurrentView();
     };
 
-    window.mvSaveEdit = function(id) {
+    window.mvSaveEdit = async function(id) {
         const ta = document.getElementById(`mv_edit_ta_${id}`);
         if (!ta) return;
         const newText = ta.value.trim();
         if (!newText) return;
-        const target = sageMemories.find(m => m.id === id);
-        if (target) {
-            target.content = newText;
-            target.updated = 'Just now';
-            target.timestamp = Date.now();
-            persistSageMemories();
-        }
-        mvActiveEditingId = null;
-        renderMvCards();
-    };
 
-    window.mvPromote = function(id) {
-        const target = sageMemories.find(m => m.id === id);
-        if (target) {
-            target.type = 'cold';
-            target.updated = 'Just now';
-            target.timestamp = Date.now();
-            persistSageMemories();
-            renderMvCards();
+        try {
+            const res = await fetch(`/api/memory/${encodeURIComponent(id)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newText })
+            });
+            if (res.ok) {
+                mvActiveEditingId = null;
+                await refreshMemoryVaultData();
+            } else {
+                const err = await res.json().catch(() => ({ detail: 'Failed to update memory' }));
+                alert(`Error updating memory: ${err.detail || 'Unknown error'}`);
+            }
+        } catch (e) {
+            console.error('[MemoryVault] Save edit failed:', e);
+            alert('Failed to save memory update.');
         }
     };
 
-    window.mvDelete = function(id) {
-        sageMemories = sageMemories.filter(m => m.id !== id);
-        if (mvActiveEditingId === id) mvActiveEditingId = null;
-        persistSageMemories();
-        renderMvCards();
+    window.mvPromote = async function(id) {
+        try {
+            const res = await fetch(`/api/memory/${encodeURIComponent(id)}/promote`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (res.ok) {
+                await refreshMemoryVaultData();
+            } else {
+                const err = await res.json().catch(() => ({ detail: 'Failed to promote memory' }));
+                alert(`Error promoting memory: ${err.detail || 'Unknown error'}`);
+            }
+        } catch (e) {
+            console.error('[MemoryVault] Promotion failed:', e);
+            alert('Failed to promote memory.');
+        }
+    };
+
+    window.mvDelete = async function(id) {
+        if (!confirm('Are you sure you want to delete this memory record?')) return;
+        try {
+            const res = await fetch(`/api/memory/${encodeURIComponent(id)}`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                if (mvActiveEditingId === id) mvActiveEditingId = null;
+                await refreshMemoryVaultData();
+            } else {
+                const err = await res.json().catch(() => ({ detail: 'Failed to delete memory' }));
+                alert(`Error deleting memory: ${err.detail || 'Unknown error'}`);
+            }
+        } catch (e) {
+            console.error('[MemoryVault] Delete failed:', e);
+            alert('Failed to delete memory.');
+        }
     };
 
     window.sageJumpToMemory = function(targetId, targetType) {
@@ -3226,7 +3690,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const memTabBtn = document.querySelector('.tab-btn[data-tab="memory"]');
         if (memTabBtn) memTabBtn.click();
 
-        // 2. Reset category filter and search so target card is visible
+        // 2. Switch subnav if target is derived
+        if (targetType === 'derived' || targetType === 'compacted') {
+            switchMvSubnav('derived');
+        } else {
+            switchMvSubnav('vault');
+        }
+
+        // 3. Reset category filter and search so target card is visible
         if (mvCurrentCategory !== 'all') {
             const allChip = document.querySelector('#mvCategoryChips .mv-chip[data-cat="all"]');
             if (allChip) allChip.click();
@@ -3235,10 +3706,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (searchInput && searchInput.value !== '') {
             searchInput.value = '';
             mvSearchQuery = '';
-            renderMvCards();
+            fetchMemories().then(renderCurrentView);
         }
 
-        // 3. Smooth scroll target card into view and trigger highlight animation
+        // 4. Smooth scroll target card into view and trigger highlight animation
         setTimeout(() => {
             const cardEl = document.getElementById(`mv_card_${targetId}`);
             if (cardEl) {
@@ -3250,7 +3721,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     cardEl.classList.remove('highlight-flash');
                 }, 1600);
             }
-        }, 120);
+        }, 200);
     };
 
     function initMemoryVault() {
@@ -3263,6 +3734,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const clearSearchBtn = document.getElementById('mvClearSearchBtn');
             const categoryChips = document.getElementById('mvCategoryChips');
             const closeBtn = document.getElementById('mvCloseBtn');
+            const syncBtn = document.getElementById('mvSyncBtn');
+            const subnavPills = document.getElementById('mvSubnavPills');
 
             const hotInput = document.getElementById('mvHotInput');
             const hotCategory = document.getElementById('mvHotCategory');
@@ -3272,34 +3745,54 @@ document.addEventListener('DOMContentLoaded', () => {
             const coldCategory = document.getElementById('mvColdCategory');
             const coldAddBtn = document.getElementById('mvColdAddBtn');
 
-            // Search
+            // Subnav view switching
+            subnavPills?.querySelectorAll('.mv-subnav-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const view = btn.dataset.view;
+                    if (view) switchMvSubnav(view);
+                });
+            });
+
+            // Live State Sync button
+            syncBtn?.addEventListener('click', () => {
+                refreshMemoryVaultData(true);
+            });
+
+            // Search (with backend search query fetch)
+            let searchTimeout = null;
             searchInput?.addEventListener('input', (e) => {
                 mvSearchQuery = e.target.value;
                 if (clearSearchBtn) {
                     clearSearchBtn.style.display = mvSearchQuery ? 'block' : 'none';
                 }
-                renderMvCards();
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(async () => {
+                    await fetchMemories();
+                    renderCurrentView();
+                }, 250);
             });
 
-            clearSearchBtn?.addEventListener('click', () => {
+            clearSearchBtn?.addEventListener('click', async () => {
                 if (searchInput) searchInput.value = '';
                 mvSearchQuery = '';
                 clearSearchBtn.style.display = 'none';
-                renderMvCards();
+                await fetchMemories();
+                renderCurrentView();
             });
 
             // Category Filter Chips
             categoryChips?.querySelectorAll('.mv-chip').forEach(chip => {
-                chip.addEventListener('click', () => {
+                chip.addEventListener('click', async () => {
                     categoryChips.querySelectorAll('.mv-chip').forEach(c => c.classList.remove('active'));
                     chip.classList.add('active');
                     mvCurrentCategory = chip.dataset.cat || 'all';
-                    renderMvCards();
+                    await fetchMemories();
+                    renderCurrentView();
                 });
             });
 
-            // Dedicated Hot Memory Submission
-            const addHotEntry = () => {
+            // Dedicated Hot Memory Submission (Real Backend POST)
+            const addHotEntry = async () => {
                 if (!hotInput) return;
                 const text = hotInput.value.trim();
                 if (!text) {
@@ -3307,19 +3800,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
                 const cat = hotCategory ? hotCategory.value : 'task';
-                const newId = 'mem_h' + (sageMemories.filter(m => m.type === 'hot').length + 1) + '_' + Math.floor(Math.random() * 1000);
+                const chatId = currentChatId || ('session_' + flashSessionId);
 
-                sageMemories.unshift({
-                    id: newId,
-                    type: 'hot',
-                    category: cat,
-                    content: text,
-                    updated: 'Just now',
-                    timestamp: Date.now()
-                });
-                persistSageMemories();
-                hotInput.value = '';
-                renderMvCards();
+                try {
+                    const res = await fetch('/api/memory', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            content: text,
+                            category: cat,
+                            tier: 'hot',
+                            chat_id: chatId
+                        })
+                    });
+                    if (res.ok) {
+                        hotInput.value = '';
+                        await refreshMemoryVaultData();
+                    } else {
+                        const err = await res.json().catch(() => ({ detail: 'Failed to create memory' }));
+                        alert(`Error creating hot memory: ${err.detail || 'Unknown error'}`);
+                    }
+                } catch (e) {
+                    console.error('[MemoryVault] Hot memory creation error:', e);
+                    alert('Failed to connect to backend memory API.');
+                }
             };
 
             hotAddBtn?.addEventListener('click', addHotEntry);
@@ -3330,8 +3834,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
 
-            // Dedicated Cold Memory Submission
-            const addColdEntry = () => {
+            // Dedicated Cold Memory Submission (Real Backend POST)
+            const addColdEntry = async () => {
                 if (!coldInput) return;
                 const text = coldInput.value.trim();
                 if (!text) {
@@ -3339,19 +3843,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
                 const cat = coldCategory ? coldCategory.value : 'preference';
-                const newId = 'mem_c' + (sageMemories.filter(m => m.type === 'cold').length + 1) + '_' + Math.floor(Math.random() * 1000);
 
-                sageMemories.unshift({
-                    id: newId,
-                    type: 'cold',
-                    category: cat,
-                    content: text,
-                    updated: 'Just now',
-                    timestamp: Date.now()
-                });
-                persistSageMemories();
-                coldInput.value = '';
-                renderMvCards();
+                try {
+                    const res = await fetch('/api/memory', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            content: text,
+                            category: cat,
+                            tier: 'cold'
+                        })
+                    });
+                    if (res.ok) {
+                        coldInput.value = '';
+                        await refreshMemoryVaultData();
+                    } else {
+                        const err = await res.json().catch(() => ({ detail: 'Failed to create memory' }));
+                        alert(`Error creating cold memory: ${err.detail || 'Unknown error'}`);
+                    }
+                } catch (e) {
+                    console.error('[MemoryVault] Cold memory creation error:', e);
+                    alert('Failed to connect to backend memory API.');
+                }
             };
 
             coldAddBtn?.addEventListener('click', addColdEntry);
@@ -3373,13 +3886,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (e.key === 'Escape') {
                     if (mvActiveEditingId !== null) {
                         mvActiveEditingId = null;
-                        renderMvCards();
+                        renderCurrentView();
                     }
                 }
             });
         }
 
-        renderMvCards();
+        // Fetch fresh data whenever memory vault is opened
+        refreshMemoryVaultData();
     }
 
     // ══════════════════════════════════════════════════

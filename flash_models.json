@@ -6,8 +6,8 @@
     "mmproj": null,
     "context": 8192,
     "temperature": 0.2,
-    "max_tokens": 4096,
-    "reasoning": "on",
+    "max_tokens": 1024,
+    "reasoning": "off",
     "estimated_vram_gib": 3.6
   },
   "qwen": {

@@ -211,6 +211,7 @@ def memory_search_hot(
             sage_memory.touch_memory_access(m["memory_id"])
 
     sanitized = [_sanitize_memory_record(m) for m in raw_memories]
+    sage_memory.log_activity("SEARCH", user_id=effective_user_id, chat_id=effective_chat_id, details=f"Hot search query: '{query or ''}', returned: {len(sanitized)}")
 
     return {
         "status": "success",
@@ -311,6 +312,7 @@ def memory_search_cold(
             sage_memory.touch_memory_access(m["memory_id"])
 
     sanitized = [_sanitize_memory_record(m) for m in raw_memories]
+    sage_memory.log_activity("SEARCH", user_id=effective_user_id, details=f"Cold search query: '{query or ''}', returned: {len(sanitized)}")
 
     return {
         "status": "success",
@@ -908,6 +910,135 @@ def memory_summarize(
     }
 
 
+def memory_update(
+    user_id: Optional[str] = None,
+    memory_id: Optional[str] = None,
+    content: Optional[str] = None,
+    category: Optional[str] = None,
+    importance: Optional[float] = None,
+    confidence: Optional[float] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Execute in-place update of an existing memory."""
+    if not memory_id or not isinstance(memory_id, str) or not memory_id.strip():
+        return {
+            "status": "error",
+            "error": {
+                "code": "INVALID_MEMORY_ID",
+                "message": "memory_id must be a non-empty string.",
+                "retryable": False,
+            },
+        }
+
+    effective_user_id = user_id or config.DEFAULT_USER_ID
+    target_id = memory_id.strip()
+
+    existing = sage_memory.get_memory(target_id)
+    if not existing:
+        return {
+            "status": "error",
+            "error": {
+                "code": "TARGET_MEMORY_NOT_FOUND",
+                "message": f"Memory '{target_id}' not found.",
+                "retryable": False,
+            },
+        }
+
+    if existing.get("user_id") != effective_user_id:
+        return {
+            "status": "error",
+            "error": {
+                "code": "UNAUTHORIZED_MEMORY_ACCESS",
+                "message": f"Memory '{target_id}' does not belong to active user.",
+                "retryable": False,
+            },
+        }
+
+    validated_cat = None
+    if category is not None:
+        try:
+            validated_cat = validate_category(str(category))
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "INVALID_MEMORY_CATEGORY",
+                    "message": str(exc),
+                    "retryable": False,
+                },
+            }
+
+    updated = sage_memory.update_memory(
+        memory_id=target_id,
+        content=content,
+        category=validated_cat,
+        importance=importance,
+        confidence=confidence,
+    )
+    if not updated:
+        return {
+            "status": "error",
+            "error": {
+                "code": "UPDATE_FAILED",
+                "message": f"Failed to update memory '{target_id}'.",
+                "retryable": False,
+            },
+        }
+
+    return {
+        "status": "success",
+        "memory": _sanitize_memory_record(updated),
+    }
+
+
+def memory_delete(
+    user_id: Optional[str] = None,
+    memory_id: Optional[str] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Execute deletion of a memory by ID."""
+    if not memory_id or not isinstance(memory_id, str) or not memory_id.strip():
+        return {
+            "status": "error",
+            "error": {
+                "code": "INVALID_MEMORY_ID",
+                "message": "memory_id must be a non-empty string.",
+                "retryable": False,
+            },
+        }
+
+    effective_user_id = user_id or config.DEFAULT_USER_ID
+    target_id = memory_id.strip()
+
+    existing = sage_memory.get_memory(target_id)
+    if not existing:
+        return {
+            "status": "error",
+            "error": {
+                "code": "TARGET_MEMORY_NOT_FOUND",
+                "message": f"Memory '{target_id}' not found.",
+                "retryable": False,
+            },
+        }
+
+    if existing.get("user_id") != effective_user_id:
+        return {
+            "status": "error",
+            "error": {
+                "code": "UNAUTHORIZED_MEMORY_ACCESS",
+                "message": f"Memory '{target_id}' does not belong to active user.",
+                "retryable": False,
+            },
+        }
+
+    success = sage_memory.delete_memory(target_id)
+    return {
+        "status": "success" if success else "error",
+        "deleted": success,
+        "memory_id": target_id,
+    }
+
+
 def register_durable_memory_tools(registry: Any) -> None:
     """Register durable memory tools in ToolRegistry."""
     # Register under primary group 'durable_memory'
@@ -918,11 +1049,13 @@ def register_durable_memory_tools(registry: Any) -> None:
     registry.register("durable_memory", "memory_search_cold", memory_search_cold)
     registry.register("durable_memory", "memory_store_hot", memory_store_hot)
     registry.register("durable_memory", "memory_store_cold", memory_store_cold)
+    registry.register("durable_memory", "memory_update", memory_update)
+    registry.register("durable_memory", "memory_delete", memory_delete)
     registry.register("durable_memory", "memory_promote", memory_promote)
     registry.register("durable_memory", "memory_summarize", memory_summarize)
 
     # Register aliases for flexible invocation
-    for grp in ("memory", "memory_search", "memory_get", "memory_store"):
+    for grp in ("memory", "memory_search", "memory_get", "memory_store", "memory_update", "memory_delete"):
         registry.register(grp, "memory_search", memory_search)
         registry.register(grp, "memory_get", memory_get)
         registry.register(grp, "memory_store", memory_store)
@@ -930,5 +1063,7 @@ def register_durable_memory_tools(registry: Any) -> None:
         registry.register(grp, "memory_search_cold", memory_search_cold)
         registry.register(grp, "memory_store_hot", memory_store_hot)
         registry.register(grp, "memory_store_cold", memory_store_cold)
+        registry.register(grp, "memory_update", memory_update)
+        registry.register(grp, "memory_delete", memory_delete)
         registry.register(grp, "memory_promote", memory_promote)
         registry.register(grp, "memory_summarize", memory_summarize)

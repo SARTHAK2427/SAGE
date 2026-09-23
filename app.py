@@ -3,6 +3,7 @@ import uuid
 import shutil
 import time
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -11,10 +12,11 @@ from contextlib import asynccontextmanager
 
 import json
 import re
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 import config
@@ -45,10 +47,34 @@ async def lifespan(app: FastAPI):
     print("Shutting down SAGE and stopping any running model server...")
     model_manager.stop_current()
     from flash.local_manager import local_flash_manager
+    from flash.transport import flash_transport
     local_flash_manager.stop_all()
+    flash_transport.close()
 
 app = FastAPI(title="SAGE - Multi-Model Agent Orchestrator", lifespan=lifespan)
 
+# Bump when shipping UI/static changes so HTML references cannot stick on old JS.
+STATIC_ASSET_VERSION = "local-memory-2"
+
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """Prevent stale HTML/JS after UI changes; allow short caching for binary assets."""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        path = request.url.path or ""
+        if path in {"/", "/memory"} or path.endswith(".html"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        elif path.startswith("/static/"):
+            if path.endswith((".js", ".css", ".html", ".map")):
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+
+app.add_middleware(CacheControlMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -122,12 +148,77 @@ async def flash_status():
     from flash.catalog import public_catalog
     from flash.local_manager import local_flash_manager
     from flash.runtime_config import runtime_config
+    mock_mode = os.environ.get("SAGE_MOCK_MODE", "0") == "1"
+    llama_ok = bool(config.LLAMA_SERVER_PATH and Path(config.LLAMA_SERVER_PATH).is_file())
+    model_dir = Path(config.MODEL_DIR) if config.MODEL_DIR else None
+    catalog = public_catalog()
+    missing_models = []
+    if model_dir and model_dir.is_dir():
+        for role, meta in catalog.items():
+            file_name = meta.get("file")
+            if file_name and not (model_dir / file_name).is_file():
+                missing_models.append(file_name)
+            mmproj = meta.get("mmproj")
+            if mmproj and not (model_dir / mmproj).is_file():
+                missing_models.append(mmproj)
+    else:
+        missing_models = [meta.get("file") for meta in catalog.values() if meta.get("file")]
     return {
         "status": "online",
         "mode": "flash",
         "runtime": runtime_config.public_snapshot(),
         "local_servers": local_flash_manager.status(),
-        "models": public_catalog(),
+        "models": catalog,
+        "readiness": {
+            "mock_mode": mock_mode,
+            "llama_server_configured": llama_ok,
+            "llama_server_path": config.LLAMA_SERVER_PATH or None,
+            "model_dir": str(model_dir) if model_dir else None,
+            "missing_model_files": missing_models,
+            "local_inference_ready": mock_mode or (llama_ok and not missing_models),
+        },
+    }
+
+
+def _valid_chat_id(chat_id: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", chat_id or ""))
+
+
+@app.get("/api/chats")
+async def list_chats(limit: int = 100):
+    """List persisted conversations for the local user."""
+    from sage_memory import sage_memory
+    chats = sage_memory.list_chats(config.DEFAULT_USER_ID, limit=limit)
+    return {"status": "success", "chats": chats}
+
+
+@app.get("/api/chats/{chat_id}")
+async def get_chat(chat_id: str):
+    """Reload all messages for one conversation."""
+    if not _valid_chat_id(chat_id):
+        raise HTTPException(status_code=400, detail="Invalid chat id")
+    from sage_memory import sage_memory
+    messages = sage_memory.get_messages(chat_id)
+    return {
+        "status": "success",
+        "chat_id": chat_id,
+        "messages": messages,
+    }
+
+
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(chat_id: str):
+    """Delete one conversation from the local SAGE memory ledger."""
+    if not _valid_chat_id(chat_id):
+        raise HTTPException(status_code=400, detail="Invalid chat id")
+    from sage_memory import sage_memory
+    from flash.memory_worker import memory_worker
+    cleared = sage_memory.clear_chat(chat_id, user_id=config.DEFAULT_USER_ID)
+    memory_worker.clear_session(chat_id)
+    return {
+        "status": "success",
+        "chat_id": chat_id,
+        **cleared,
     }
 
 
@@ -139,6 +230,12 @@ async def configure_flash_runtime(payload: Dict[str, Any] = Body(...)):
     try:
         snapshot = runtime_config.configure(payload)
         local_flash_manager.reconcile(snapshot)
+        from flash.transport import flash_transport
+        threading.Thread(
+            target=flash_transport.warm_configured_connections,
+            name="sage-flash-warmup",
+            daemon=True,
+        ).start()
         return {"status": "success", "runtime": snapshot}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -155,11 +252,18 @@ async def reset_flash_runtime():
 
 @app.delete("/api/flash/session/{session_id}")
 async def clear_flash_session(session_id: str):
-    """Clear background memory belonging only to the selected chat."""
+    """Clear the local SQLite conversation and leftover Flash JSONL for one session."""
     from flash.memory_worker import memory_worker
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+    from sage_memory import sage_memory
+    if not _valid_chat_id(session_id):
         raise HTTPException(status_code=400, detail="Invalid session id")
-    return {"status": "success", "removed_memories": memory_worker.clear_session(session_id)}
+    cleared = sage_memory.clear_chat(session_id, user_id=config.DEFAULT_USER_ID)
+    memory_worker.clear_session(session_id)
+    return {
+        "status": "success",
+        "messages_removed": cleared.get("messages_removed", 0),
+        "hot_memories_removed": cleared.get("memories_removed", 0),
+    }
 
 
 @app.post("/api/flash/runtime/test")
@@ -179,8 +283,10 @@ async def deploy_flash_model(payload: Dict[str, Any] = Body(...)):
     from starlette.concurrency import run_in_threadpool
     from flash.transport import flash_transport
     role = str(payload.get("role") or "")
-    if role not in {"gemma", "qwen", "memory"}:
-        raise HTTPException(status_code=400, detail="role must be gemma, qwen, or memory")
+    if role == "memory":
+        raise HTTPException(status_code=400, detail="The Flash 2B memory role is disabled. Use the local SAGE memory ledger.")
+    if role not in {"gemma", "qwen"}:
+        raise HTTPException(status_code=400, detail="role must be gemma or qwen")
     try:
         result = await run_in_threadpool(
             flash_transport.deploy,
@@ -649,6 +755,8 @@ async def flash_endpoint(
     objective: str = Form(...),
     files: Optional[List[UploadFile]] = File(None),
     session_id: Optional[str] = Form(None),
+    temperature: Optional[float] = Form(None),
+    save_history: Optional[str] = Form(None),
 ):
     """Run the host-agnostic Flash graph while leaving legacy chat untouched."""
     if not objective or not objective.strip():
@@ -659,6 +767,15 @@ async def flash_endpoint(
         objective, files, direct_types=direct_types
     )
     intake_seconds = time.perf_counter() - request_started
+    persist = True
+    if save_history is not None:
+        persist = str(save_history).strip().lower() not in {"0", "false", "no", "off"}
+    temp_value = None
+    if temperature is not None:
+        try:
+            temp_value = max(0.0, min(2.0, float(temperature)))
+        except (TypeError, ValueError):
+            temp_value = None
     from starlette.concurrency import run_in_threadpool
     from flash.service import flash_service
     try:
@@ -669,6 +786,8 @@ async def flash_endpoint(
             file_map=file_map,
             session_id=session_id,
             user_id=config.DEFAULT_USER_ID,
+            temperature=temp_value,
+            save_history=persist,
         )
         if run_state.registered_documents:
             result["registered_documents"] = [
@@ -749,26 +868,336 @@ async def chat_stream_endpoint(
         }
     )
 
+# ── Memory API Endpoints ──────────────────────────────────────────────────
+
+@app.get("/api/memory/status")
+async def get_memory_status():
+    """Return live status of backend database, vector index, embedding model, and model availability."""
+    from sage_memory import sage_memory, get_backend_type, _get_sqlite_db_path
+    
+    # 1. Database status
+    db_backend = get_backend_type()
+    db_connected = False
+    try:
+        conn = sage_memory._get_connection()
+        conn.close()
+        db_connected = True
+    except Exception as e:
+        logger.warning("DB health check failed: %s", e)
+
+    # 2. Chroma status
+    chroma_status = "offline"
+    hot_col_count = 0
+    cold_col_count = 0
+    try:
+        from sage_memory_index import memory_vector_index
+        hot_col = memory_vector_index._get_collection("hot")
+        cold_col = memory_vector_index._get_collection("cold")
+        hot_col_count = hot_col.count()
+        cold_col_count = cold_col.count()
+        chroma_status = "ready"
+    except (Exception, BaseException) as e:
+        chroma_status = f"unavailable ({e.__class__.__name__})"
+
+    # 3. Model runtime status
+    # Models are not installed on this machine per requirements
+    model_status = {
+        "available": False,
+        "label": "MODEL UNAVAILABLE",
+        "detail": "Model weights are not installed on this host. Deterministic memory operations, persistence, context budgeting, and tools are fully operational.",
+    }
+
+    # 4. Summary counts
+    active_hot = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, memory_tier="hot", status="active", limit=500))
+    active_cold = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, memory_tier="cold", status="active", limit=500))
+    compacted_count = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, status="compacted", limit=500))
+
+    return {
+        "status": "success",
+        "database": {
+            "engine": db_backend,
+            "status": "connected" if db_connected else "disconnected",
+            "sqlite_path": str(_get_sqlite_db_path()) if db_backend == "sqlite" else None,
+        },
+        "vector_index": {
+            "engine": "Chroma",
+            "status": chroma_status,
+            "hot_vectors": hot_col_count,
+            "cold_vectors": cold_col_count,
+            "collections": {
+                "hot": getattr(config, "SAGE_MEMORY_HOT_COLLECTION", "sage_memory_hot"),
+                "cold": getattr(config, "SAGE_MEMORY_COLD_COLLECTION", "sage_memory_cold"),
+            },
+        },
+        "embedding": {
+            "model": getattr(config, "EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2"),
+            "status": "ready" if chroma_status == "ready" else "fallback_deterministic",
+        },
+        "model_runtime": model_status,
+        "counts": {
+            "hot_active": active_hot,
+            "cold_active": active_cold,
+            "derived_compacted": compacted_count,
+        },
+        "configuration": {
+            "recent_chat_max_messages": config.SAGE_RECENT_CHAT_MAX_MESSAGES,
+            "context_budget_tokens": config.SAGE_CONTEXT_MEMORY_BUDGET_TOKENS,
+            "global_budget_tokens": config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS,
+            "global_max_items": config.SAGE_GLOBAL_MEMORY_MAX_ITEMS,
+        },
+    }
+
+
+@app.get("/api/memory/recent-chat")
+async def get_recent_chat_memory(chat_id: Optional[str] = None, limit: int = 5):
+    """Retrieve recent conversation messages from the ledger."""
+    from sage_memory import sage_memory
+
+    resolved_chat_id = chat_id
+    if not resolved_chat_id:
+        # Default to most recent chat for the default user
+        chats = sage_memory.list_chats(config.DEFAULT_USER_ID, limit=1)
+        if chats:
+            resolved_chat_id = chats[0]["chat_id"]
+
+    messages = []
+    if resolved_chat_id:
+        all_msgs = sage_memory.get_messages(resolved_chat_id)
+        clamped_limit = max(1, min(limit or config.SAGE_RECENT_CHAT_MAX_MESSAGES, 50))
+        recent_slice = all_msgs[-clamped_limit:] if all_msgs else []
+        messages = [
+            {
+                "msg_id": str(m.get("msg_id", "")),
+                "role": str(m.get("role", "")),
+                "content": str(m.get("content", "")),
+                "created_at": str(m.get("created_at", "")),
+            }
+            for m in recent_slice
+        ]
+
+    return {
+        "status": "success",
+        "chat_id": resolved_chat_id,
+        "configured_window": config.SAGE_RECENT_CHAT_MAX_MESSAGES,
+        "label": "Recent conversation context - chronological, not semantic memory.",
+        "count": len(messages),
+        "messages": messages,
+    }
+
+
+@app.get("/api/memory/memories")
+async def list_memories_api(
+    tier: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = "active",
+    search: Optional[str] = None,
+    user_id: Optional[str] = None,
+):
+    """List semantic memories with filtering and search."""
+    from sage_memory import sage_memory, ALLOWED_CATEGORIES
+
+    effective_user_id = user_id or config.DEFAULT_USER_ID
+    tier_filter = tier.lower().strip() if tier and tier.lower().strip() in ("hot", "cold") else None
+    cat_filter = category.lower().strip() if category and category.lower().strip() in ALLOWED_CATEGORIES else None
+
+    # If search string provided, search via vector index or fallback to substring
+    memories = []
+    if search and search.strip():
+        q = search.strip().lower()
+        all_mems = sage_memory.list_memories(
+            user_id=effective_user_id,
+            category=cat_filter,
+            memory_tier=tier_filter,
+            chat_id=chat_id if tier_filter == "hot" else None,
+            status=status or "active",
+            limit=500,
+        )
+        memories = [m for m in all_mems if q in (m.get("content") or "").lower() or q in (m.get("category") or "").lower() or q in (m.get("memory_id") or "").lower()]
+        sage_memory.log_activity("SEARCH", user_id=effective_user_id, chat_id=chat_id, details=f"UI Search query: '{search}', matches: {len(memories)}")
+    else:
+        memories = sage_memory.list_memories(
+            user_id=effective_user_id,
+            category=cat_filter,
+            memory_tier=tier_filter,
+            chat_id=chat_id if tier_filter == "hot" else None,
+            status=status or "active",
+            limit=500,
+        )
+
+    # Derived memories query (status == 'compacted' or category == 'summary')
+    derived_memories = [m for m in memories if m.get("status") == "compacted" or m.get("category") == "summary"]
+
+    return {
+        "status": "success",
+        "total": len(memories),
+        "memories": memories,
+        "derived": derived_memories,
+    }
+
+
+@app.post("/api/memory")
+async def create_memory_api(payload: Dict[str, Any] = Body(...)):
+    """Create a new hot or cold memory in the canonical backend database."""
+    from sage_memory import sage_memory, validate_category
+
+    content = payload.get("content")
+    if not content or not str(content).strip():
+        raise HTTPException(status_code=400, detail="content must be a non-empty string.")
+
+    cat_raw = payload.get("category", "fact")
+    try:
+        validated_cat = validate_category(cat_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    tier_raw = str(payload.get("tier") or payload.get("memory_tier") or "cold").lower().strip()
+    tier = "hot" if tier_raw == "hot" else "cold"
+
+    chat_id = payload.get("chat_id")
+    if tier == "hot" and not chat_id:
+        chats = sage_memory.list_chats(config.DEFAULT_USER_ID, limit=1)
+        if chats:
+            chat_id = chats[0]["chat_id"]
+        else:
+            chat_id = "default_session"
+
+    importance = max(0.0, min(1.0, float(payload.get("importance", 0.5))))
+    confidence = max(0.0, min(1.0, float(payload.get("confidence", 1.0))))
+    user_id = payload.get("user_id") or config.DEFAULT_USER_ID
+
+    stored = sage_memory.store_memory(
+        user_id=user_id,
+        content=str(content).strip(),
+        category=validated_cat,
+        importance=importance,
+        confidence=confidence,
+        source_chat_id=chat_id if tier == "hot" else payload.get("chat_id"),
+        memory_tier=tier,
+    )
+
+    return {"status": "success", "memory": stored}
+
+
+@app.put("/api/memory/{memory_id}")
+async def update_memory_api(memory_id: str, payload: Dict[str, Any] = Body(...)):
+    """In-place update of memory content, category, importance, or confidence."""
+    from sage_memory import sage_memory, validate_category
+
+    existing = sage_memory.get_memory(memory_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Memory '{memory_id}' not found.")
+
+    category = payload.get("category")
+    validated_cat = None
+    if category is not None:
+        try:
+            validated_cat = validate_category(str(category))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    updated = sage_memory.update_memory(
+        memory_id=memory_id,
+        content=payload.get("content"),
+        category=validated_cat,
+        importance=payload.get("importance"),
+        confidence=payload.get("confidence"),
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update memory in database.")
+
+    return {"status": "success", "memory": updated}
+
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory_api(memory_id: str):
+    """Soft-delete memory record in backend database and sync vector index."""
+    from sage_memory import sage_memory
+
+    existing = sage_memory.get_memory(memory_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Memory '{memory_id}' not found.")
+
+    success = sage_memory.delete_memory(memory_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete memory.")
+
+    return {"status": "success", "deleted": True, "memory_id": memory_id}
+
+
+@app.post("/api/memory/{memory_id}/promote")
+async def promote_memory_api(memory_id: str, payload: Dict[str, Any] = Body(default={})):
+    """Promote session hot memory to global cold memory."""
+    from sage_memory import sage_memory
+
+    existing = sage_memory.get_memory(memory_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Memory '{memory_id}' not found.")
+
+    user_id = payload.get("user_id") or existing.get("user_id") or config.DEFAULT_USER_ID
+    try:
+        promoted = sage_memory.promote_memory(memory_id=memory_id, user_id=user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {"status": "success", "memory": promoted}
+
+
+@app.get("/api/memory/activity")
+async def get_memory_activity_api(user_id: Optional[str] = None, limit: int = 25):
+    """Retrieve operational memory audit log events (STORE, SEARCH, UPDATE, DELETE, PROMOTE, SUMMARIZE)."""
+    from sage_memory import sage_memory
+
+    events = sage_memory.get_recent_activity(user_id=user_id or config.DEFAULT_USER_ID, limit=limit)
+    # Normalise: DB stores 'event_type' but the frontend reads 'action'.
+    # Expose both so neither the DB schema nor the JS need to change.
+    for ev in events:
+        if "action" not in ev and "event_type" in ev:
+            ev["action"] = ev["event_type"]
+    return {"status": "success", "activities": events}
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
+
+
+def _html_with_asset_version(path: Path) -> Response:
+    """Serve HTML with no-store caching and a stable asset cache-buster."""
+    text = path.read_text(encoding="utf-8")
+    # Keep any existing ?v=… markers in sync with the server version.
+    text = re.sub(
+        r'(/static/(?:app\.js|style\.css|artifact_graph\.js))(?:\?v=[^"\']*)?',
+        rf'\1?v={STATIC_ASSET_VERSION}',
+        text,
+    )
+    return Response(
+        content=text,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
 
 @app.get("/")
 async def index():
     index_file = config.STATIC_DIR / "index.html"
     if index_file.exists():
-        return FileResponse(index_file)
+        return _html_with_asset_version(index_file)
     return JSONResponse({"message": "SAGE Backend is running. Static files pending."})
+
 
 @app.get("/memory")
 async def memory_view():
     memory_file = config.STATIC_DIR / "memory.html"
     if memory_file.exists():
-        return FileResponse(memory_file)
+        return _html_with_asset_version(memory_file)
     return JSONResponse({"message": "Memory view pending."})
 
 if __name__ == "__main__":
     print(f"\n========================================================")
-    print(f"  SAGE — Minimal Multi-Model Agent Orchestrator")
+    print(f"  SAGE - Minimal Multi-Model Agent Orchestrator")
     print(f"  Web UI: http://127.0.0.1:{config.APP_PORT}")
     print(f"========================================================\n")
     uvicorn.run("app:app", host="127.0.0.1", port=config.APP_PORT, reload=False)

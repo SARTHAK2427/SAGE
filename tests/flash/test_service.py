@@ -46,8 +46,6 @@ def test_flash_cases(monkeypatch, tmp_path, route, worker, expected, calls):
         return {"content": content, "duration": 0.01, "usage": {}, "timings": {}}
 
     monkeypatch.setattr("flash.service.flash_transport.invoke", fake_invoke)
-    monkeypatch.setattr("flash.service.memory_worker.recent", lambda _session: [])
-    monkeypatch.setattr("flash.service.memory_worker.schedule", lambda *_args, **_kwargs: None)
 
     needs_image = route["flash_case"] != "A"
     result = FlashService().run(
@@ -72,8 +70,6 @@ def test_gemma_remains_authoritative_for_ambiguous_image_turn(monkeypatch, tmp_p
         return {"content": content, "duration": 0.01, "usage": {}, "timings": {}}
 
     monkeypatch.setattr("flash.service.flash_transport.invoke", fake_invoke)
-    monkeypatch.setattr("flash.service.memory_worker.recent", lambda _session: [{"summary": "USER: describe this image"}])
-    monkeypatch.setattr("flash.service.memory_worker.schedule", lambda *_args, **_kwargs: None)
 
     result = FlashService().run(
         objective="What did I say before?",
@@ -97,8 +93,6 @@ def test_flash_injects_canonical_memory_and_persists_completed_turn(monkeypatch)
 
     persisted = []
     monkeypatch.setattr("flash.service.flash_transport.invoke", fake_invoke)
-    monkeypatch.setattr("flash.service.memory_worker.recent", lambda _session: [])
-    monkeypatch.setattr("flash.service.memory_worker.schedule", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("flash.service._durable_memory_context", lambda _session, _user: "PERSISTENT MEMORY:\n- [preference] User prefers Python.")
     monkeypatch.setattr("flash.service._persist_flash_turn", lambda *args: persisted.append(args))
 
@@ -113,3 +107,47 @@ def test_flash_injects_canonical_memory_and_persists_completed_turn(monkeypatch)
     assert "PERSISTENT MEMORY:" in captured["messages"][1]["content"]
     assert persisted == [("session_test", "local_user", "What language do I prefer?", "done")]
     assert result["chat_id"] == "session_test"
+    assert result["memory_job"] is None
+
+
+def test_flash_persists_and_reloads_from_local_sqlite(monkeypatch, tmp_path):
+    from sage_memory import sage_memory, set_sqlite_path
+
+    db_path = str(tmp_path / "flash_local_memory.db")
+    monkeypatch.setenv("SAGE_MEMORY_DB", "sqlite")
+    set_sqlite_path(db_path)
+    chat_id = "verify_local_memory"
+    seen_roles = []
+    captured = {}
+
+    def fake_invoke(role, messages, **_kwargs):
+        seen_roles.append(role)
+        captured["prompt"] = messages[1]["content"]
+        return {"content": '{"flash_case":"A","gemma_answer":"You like espresso."}', "duration": 0.01, "usage": {}, "timings": {}}
+
+    monkeypatch.setattr("flash.service.flash_transport.invoke", fake_invoke)
+    service = FlashService()
+    first = service.run(
+        objective="Remember that I like espresso.",
+        attachments=[],
+        file_map={},
+        session_id=chat_id,
+        user_id="local_user",
+    )
+    messages = sage_memory.get_messages(chat_id)
+    second = service.run(
+        objective="What do I like?",
+        attachments=[],
+        file_map={},
+        session_id=chat_id,
+        user_id="local_user",
+    )
+    set_sqlite_path(None)
+
+    assert first["memory_job"] is None
+    assert "memory" not in seen_roles
+    assert len(messages) == 2
+    assert messages[0]["content"] == "Remember that I like espresso."
+    assert "RECENT CONVERSATION:" in captured["prompt"]
+    assert "espresso" in captured["prompt"]
+    assert second["history_saved"] is True

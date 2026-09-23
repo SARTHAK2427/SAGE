@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=integrated-runtime-3">
 </head>
 <body>
 <div class="app-shell">
@@ -45,51 +45,7 @@
 
             <div class="sec-label">HISTORY</div>
             <nav class="history-list" id="historyList">
-                <div class="history-item active" data-id="1">
-                    <div class="h-text">
-                        <span class="h-title">Inspection report analysis</span>
-                        <span class="h-time">Today · 14:32</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                </div>
-                <div class="history-item" data-id="2">
-                    <div class="h-text">
-                        <span class="h-title">Compliance script draft</span>
-                        <span class="h-time">Today · 13:19</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                </div>
-                <div class="history-item" data-id="3">
-                    <div class="h-text">
-                        <span class="h-title">Compare SOP revisions</span>
-                        <span class="h-time">Yesterday · 18:42</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                </div>
-                <div class="history-item" data-id="4">
-                    <div class="h-text">
-                        <span class="h-title">Extract SOP requirements</span>
-                        <span class="h-time">Yesterday · 16:03</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                </div>
-                <div class="history-item" data-id="5">
-                    <div class="h-text">
-                        <span class="h-title">Summarize safety manual</span>
-                        <span class="h-time">Mon · 09:41</span>
-                    </div>
-                    <button class="h-del-btn" title="Delete chat" aria-label="Delete chat">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                </div>
+                <!-- Populated from /api/chats -->
             </nav>
         </div>
 
@@ -114,22 +70,38 @@
                     <div class="sp-group-label">APPEARANCE</div>
                     <div class="sp-row">
                         <span>Theme</span>
-                        <select class="sp-select"><option>Light</option><option>Dark</option><option>System</option></select>
+                        <select class="sp-select" id="settingTheme">
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="system">System</option>
+                        </select>
                     </div>
                     <div class="sp-row">
                         <span>Font size</span>
-                        <select class="sp-select"><option>Small</option><option selected>Medium</option><option>Large</option></select>
+                        <select class="sp-select" id="settingFontSize">
+                            <option value="small">Small</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="large">Large</option>
+                        </select>
                     </div>
                 </div>
                 <div class="sp-group">
                     <div class="sp-group-label">MODEL</div>
                     <div class="sp-row">
                         <span>Default model</span>
-                        <select class="sp-select"><option>Auto</option><option>Gemma 4B</option><option>Qwen3-VL</option></select>
+                        <select class="sp-select" id="settingDefaultModel">
+                            <option value="auto">Auto</option>
+                            <option value="gemma">Gemma 4B</option>
+                            <option value="qwen">Qwen3-VL</option>
+                        </select>
                     </div>
                     <div class="sp-row">
                         <span>Temperature</span>
-                        <select class="sp-select"><option>0.3</option><option selected>0.7</option><option>1.0</option></select>
+                        <select class="sp-select" id="settingTemperature">
+                            <option value="0.3">0.3</option>
+                            <option value="0.7" selected>0.7</option>
+                            <option value="1.0">1.0</option>
+                        </select>
                     </div>
                     <button class="flash-open-btn" id="openFlashRuntimeBtn" type="button">
                         <span class="flash-open-dot"></span>
@@ -141,11 +113,11 @@
                     <div class="sp-group-label">PRIVACY</div>
                     <div class="sp-row">
                         <span>Save history</span>
-                        <label class="toggle"><input type="checkbox" checked><span class="tk"></span></label>
+                        <label class="toggle"><input type="checkbox" id="settingSaveHistory" checked><span class="tk"></span></label>
                     </div>
                     <div class="sp-row">
                         <span>Send telemetry</span>
-                        <label class="toggle"><input type="checkbox"><span class="tk"></span></label>
+                        <label class="toggle"><input type="checkbox" id="settingTelemetry"><span class="tk"></span></label>
                     </div>
                 </div>
             </div>
@@ -581,8 +553,46 @@
                 </div>
             </div>
 
-            <!-- Full-Screen Dual Board Split -->
-            <div class="mv-dual-board">
+            <!-- Live System Status Bar -->
+            <div class="mv-status-bar" id="mvStatusBar">
+                <div class="mv-status-group">
+                    <div class="mv-status-item">
+                        <span class="mv-status-label">Database:</span>
+                        <span class="mv-status-pill pill-db" id="mvDbStatusPill"><span class="mv-dot green"></span><span id="mvDbStatusText">SQLite · Active</span></span>
+                    </div>
+                    <div class="mv-status-item">
+                        <span class="mv-status-label">Vector Index:</span>
+                        <span class="mv-status-pill pill-chroma" id="mvChromaStatusPill"><span class="mv-dot green"></span><span id="mvChromaStatusText">Chroma · Ready</span></span>
+                    </div>
+                    <div class="mv-status-item">
+                        <span class="mv-status-label">Embedding:</span>
+                        <span class="mv-status-pill pill-emb" id="mvEmbStatusPill"><span class="mv-dot blue"></span><span id="mvEmbStatusText">all-MiniLM-L6-v2</span></span>
+                    </div>
+                    <div class="mv-status-item">
+                        <span class="mv-status-label">Model Runtime:</span>
+                        <span class="mv-status-pill pill-model-unavail" id="mvModelStatusPill" title="SAGE model weights not installed on this host. Deterministic memory store, retrieval, budgeting, and tool dispatcher are fully active."><span class="mv-dot orange"></span><span>MODEL UNAVAILABLE</span></span>
+                    </div>
+                </div>
+                <div class="mv-status-actions">
+                    <button class="mv-sync-btn" id="mvSyncBtn" title="Sync memory state from backend database">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                        <span>Sync State</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sub-Navigation Bar -->
+            <div class="mv-subnav-bar">
+                <div class="mv-subnav-pills" id="mvSubnavPills">
+                    <button class="mv-subnav-btn active" data-view="vault">Semantic Memory Vault</button>
+                    <button class="mv-subnav-btn" data-view="recent">Recent Conversation (5 msgs)</button>
+                    <button class="mv-subnav-btn" data-view="derived">Derived / Compressed Memory</button>
+                    <button class="mv-subnav-btn" data-view="activity">Operational Activity Log</button>
+                </div>
+            </div>
+
+            <!-- Full-Screen Dual Board Split (Semantic Hot & Cold) -->
+            <div class="mv-dual-board" id="mvViewVault">
                 
                 <!-- ════════ LEFT COLUMN: HOT MEMORY (SESSION) ════════ -->
                 <div class="mv-tier-col mv-col-hot">
@@ -593,7 +603,7 @@
                                 <span>HOT MEMORY</span>
                             </div>
                             <h3 class="mv-tier-title">Session Scratchpad</h3>
-                            <span class="mv-tier-desc">Real-time working context for current session. Auto-wiped on session reset.</span>
+                            <span class="mv-tier-desc">Real-time working context for current session. Scoped to current chat.</span>
                         </div>
                         <div class="mv-tier-count-pill" title="Active session items">
                             <span class="mv-count-number" id="mvHotCount">0</span>
@@ -637,7 +647,7 @@
                                 <span>COLD MEMORY</span>
                             </div>
                             <h3 class="mv-tier-title">Persistent Knowledge Base</h3>
-                            <span class="mv-tier-desc">Durable cross-session memory. Stores user preferences, project conventions &amp; rules.</span>
+                            <span class="mv-tier-desc">Durable cross-session memory. Persistent user-level semantic memory.</span>
                         </div>
                         <div class="mv-tier-count-pill" title="Persistent vault items">
                             <span class="mv-count-number" id="mvColdCount">0</span>
@@ -673,6 +683,69 @@
                     </div>
                 </div>
 
+            </div>
+
+            <!-- ════════ RECENT CONVERSATION CONTEXT VIEW ════════ -->
+            <div class="mv-section-view" id="mvViewRecent" style="display: none;">
+                <div class="mv-section-header">
+                    <div class="mv-section-title-wrap">
+                        <div class="mv-tier-badge recent">
+                            <span class="mv-pulse-dot"></span>
+                            <span>CONVERSATION LEDGER</span>
+                        </div>
+                        <h3 class="mv-section-title">Recent Conversation Context</h3>
+                        <p class="mv-section-desc">Chronological window of the latest messages injected into model prompt. <strong>Recent conversation context — chronological, not semantic memory.</strong></p>
+                    </div>
+                    <div class="mv-tier-count-pill">
+                        <span class="mv-count-number" id="mvRecentMsgCount">0</span>
+                        <span class="mv-count-text">Messages</span>
+                    </div>
+                </div>
+                <div class="mv-recent-msgs-stream" id="mvRecentMsgsStack">
+                    <!-- Populated from /api/memory/recent-chat -->
+                </div>
+            </div>
+
+            <!-- ════════ DERIVED / COMPRESSED MEMORY VIEW ════════ -->
+            <div class="mv-section-view" id="mvViewDerived" style="display: none;">
+                <div class="mv-section-header">
+                    <div class="mv-section-title-wrap">
+                        <div class="mv-tier-badge derived">
+                            <span class="mv-pulse-dot"></span>
+                            <span>COMPRESSED MEMORY</span>
+                        </div>
+                        <h3 class="mv-section-title">Derived &amp; Compacted Summaries</h3>
+                        <p class="mv-section-desc">Summarized knowledge representations derived from earlier conversation turns or compacted hot memories.</p>
+                    </div>
+                    <div class="mv-tier-count-pill">
+                        <span class="mv-count-number" id="mvDerivedCount">0</span>
+                        <span class="mv-count-text">Entries</span>
+                    </div>
+                </div>
+                <div class="mv-tier-cards-stream" id="mvDerivedCardsStack">
+                    <!-- Populated dynamically from real backend -->
+                </div>
+            </div>
+
+            <!-- ════════ OPERATIONAL ACTIVITY LOG VIEW ════════ -->
+            <div class="mv-section-view" id="mvViewActivity" style="display: none;">
+                <div class="mv-section-header">
+                    <div class="mv-section-title-wrap">
+                        <div class="mv-tier-badge activity">
+                            <span class="mv-pulse-dot"></span>
+                            <span>AUDIT TRAIL</span>
+                        </div>
+                        <h3 class="mv-section-title">Memory Activity Event Ledger</h3>
+                        <p class="mv-section-desc">Real backend operational events (STORE, SEARCH, UPDATE, DELETE, PROMOTE, SUMMARIZE) recording memory lifecycle actions.</p>
+                    </div>
+                    <div class="mv-tier-count-pill">
+                        <span class="mv-count-number" id="mvActivityCount">0</span>
+                        <span class="mv-count-text">Events</span>
+                    </div>
+                </div>
+                <div class="mv-activity-stream" id="mvActivityStream">
+                    <!-- Populated from /api/memory/activity -->
+                </div>
             </div>
         </div>
     </main>
@@ -813,22 +886,10 @@
             <section class="flash-runtime-section">
                 <div class="flash-section-heading">
                     <span class="flash-step">02</span>
-                    <div><h3>Background memory model</h3><p>Runs outside the response critical path. Choose CPU, reuse the GPU server, or use another endpoint.</p></div>
-                </div>
-                <label class="flash-wide-field"><span>Memory location</span>
-                    <select id="flashMemoryProvider">
-                        <option value="disabled">Disabled</option>
-                        <option value="local_cpu">Local CPU / RAM</option>
-                        <option value="primary_remote">Same remote server as Gemma + Qwen</option>
-                        <option value="secondary_remote">Separate remote server</option>
-                    </select>
-                </label>
-                <div class="flash-connection-fields" id="flashMemoryRemoteFields" hidden>
-                    <label><span>Memory server URL</span><input id="flashMemoryUrl" type="url" placeholder="https://second-tunnel.example.com" autocomplete="off" spellcheck="false"></label>
-                    <label><span>API key <em>optional</em></span><input id="flashMemoryKey" type="password" placeholder="Bearer key" autocomplete="new-password"></label>
-                </div>
-                <div class="flash-model-id-grid one">
-                    <label><span>Memory server model ID</span><input id="flashMemoryModelId" value="memory" autocomplete="off"></label>
+                    <div>
+                        <h3>Local SAGE memory</h3>
+                        <p>Flash no longer runs a 2B compressor on CPU or a remote GPU. Chat history and durable facts use the local SQLite ledger only (<code>temp/sage_memory.db</code>).</p>
+                    </div>
                 </div>
             </section>
 
@@ -838,8 +899,8 @@
                     <div><h3>Catalog deployment</h3><p>Optional. Ask a compatible SAGE bridge to fetch the fixed repo/quant entries in <code>flash_models.json</code>.</p></div>
                 </div>
                 <div class="flash-deploy-row">
-                    <select id="flashDeployRole"><option value="gemma">Gemma</option><option value="qwen">Qwen</option><option value="memory">Memory 2B</option></select>
-                    <select id="flashDeployTarget"><option value="primary">Primary endpoint</option><option value="memory">Memory endpoint</option></select>
+                    <select id="flashDeployRole"><option value="gemma">Gemma</option><option value="qwen">Qwen</option></select>
+                    <select id="flashDeployTarget"><option value="primary">Primary endpoint</option></select>
                     <select id="flashDeployGpu"><option value="0">GPU #0</option><option value="1">GPU #1</option></select>
                     <button id="flashDeployBtn" type="button">Deploy model</button>
                 </div>
@@ -925,7 +986,7 @@
 </div>
 
 <script src="/static/three.min.js" onerror="this.onerror=null;this.src='three.min.js'"></script>
-<script src="/static/artifact_graph.js" onerror="this.onerror=null;this.src='artifact_graph.js'"></script>
-<script src="/static/app.js" onerror="this.onerror=null;this.src='app.js'"></script>
+<script src="/static/artifact_graph.js?v=integrated-runtime-3" onerror="this.onerror=null;this.src='artifact_graph.js?v=integrated-runtime-3'"></script>
+<script src="/static/app.js?v=integrated-runtime-3" onerror="this.onerror=null;this.src='app.js?v=integrated-runtime-3'"></script>
 </body>
 </html>
