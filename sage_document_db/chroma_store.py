@@ -65,7 +65,7 @@ def _check_index_config() -> None:
     """Enforce that the stored index config matches current config.
 
     If absent: create it.
-    If embedding model differs: raise to require rebuild.
+    If embedding model differs: raise to require a deliberate rebuild.
     """
     config_path = INDEX_CONFIG_FILE
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +82,8 @@ def _check_index_config() -> None:
         raise RuntimeError(
             f"Chroma index was built with embedding model "
             f"'{stored.get('embedding_model')}' but current config uses "
-            f"'{EMBEDDING_MODEL}'. Delete chroma_db/ and run rebuild-all."
+            f"'{EMBEDDING_MODEL}'. Use the RAG rebuild action to create a clean index; "
+            "do not mix embedding dimensions in one Chroma store."
         )
 
     if stored.get("chunk_target_tokens") != CHUNK_TARGET_TOKENS:

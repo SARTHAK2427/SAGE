@@ -237,7 +237,9 @@ class MemoryVectorIndex:
                 {"status": {"$eq": "active"}},
                 {"memory_tier": {"$eq": tier_key}},
             ]
-            if tier_key == "hot" and chat_id:
+            # Empty string is the explicit Global scope because global records
+            # are indexed with chat_id="".  None means no chat filter.
+            if chat_id is not None:
                 where_conditions.append({"chat_id": {"$eq": str(chat_id)}})
             if category:
                 where_conditions.append({"category": {"$eq": str(category)}})

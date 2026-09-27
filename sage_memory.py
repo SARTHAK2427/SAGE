@@ -48,8 +48,8 @@ def _get_sqlite_db_path() -> str:
     env_path = os.environ.get("SAGE_SQLITE_PATH")
     if env_path:
         return env_path
-    db_file = config.TEMP_DIR / "sage_memory.db"
-    config.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    db_file = config.MEMORY_ROOT / "sage_memory.db"
+    config.MEMORY_ROOT.mkdir(parents=True, exist_ok=True)
     return str(db_file)
 
 
@@ -65,18 +65,26 @@ def validate_category(category: str) -> str:
 
 def _sync_index_store(mem: Dict[str, Any]) -> None:
     try:
-        from sage_memory_index import memory_vector_index
-        memory_vector_index.index_memory(mem)
+        from memory_system.index_outbox import index_outbox
+        index_outbox.enqueue(str(mem.get("memory_id") or ""), "upsert", mem)
     except Exception as exc:
         logger.error("Chroma memory index sync failed on store: %s", exc)
 
 
 def _sync_index_status(memory_id: str, status: str) -> None:
     try:
-        from sage_memory_index import memory_vector_index
-        memory_vector_index.update_memory_status(memory_id, status)
+        from memory_system.index_outbox import index_outbox
+        index_outbox.enqueue(memory_id, "status", {"status": status})
     except Exception as exc:
         logger.error("Chroma memory status sync failed: %s", exc)
+
+
+def _sync_index_delete(memory_id: str, tier: Optional[str] = None) -> None:
+    try:
+        from memory_system.index_outbox import index_outbox
+        index_outbox.enqueue(memory_id, "delete", {"tier": tier})
+    except Exception as exc:
+        logger.error("Chroma memory delete sync failed: %s", exc)
 
 
 class SageMemory:
@@ -339,10 +347,10 @@ class SageMemory:
         user_id: str,
         role: str,
         content: str,
-    ) -> None:
+    ) -> Optional[str]:
         """Persist a conversation message to the ledger."""
         if not chat_id or not content or not content.strip():
-            return
+            return None
 
         backend = get_backend_type()
         msg_id = str(uuid.uuid4())
@@ -371,6 +379,7 @@ class SageMemory:
                         )
         finally:
             conn.close()
+        return msg_id
 
     def get_messages(self, chat_id: str) -> List[Dict[str, Any]]:
         """Retrieve all messages for a chat_id in chronological order."""
@@ -569,9 +578,16 @@ class SageMemory:
         return results
 
     def clear_chat(self, chat_id: str, user_id: Optional[str] = None) -> Dict[str, int]:
-        """Delete canonical messages and session-scoped hot memories for one chat."""
+        """Delete canonical messages and every chat-scoped memory for one chat."""
         if not chat_id:
             return {"messages_removed": 0, "memories_removed": 0}
+        # Capture derived-index IDs before the canonical rows disappear.
+        indexed_memories = self.list_memories(
+            user_id=user_id or config.DEFAULT_USER_ID,
+            chat_id=chat_id,
+            status="active",
+            limit=500,
+        )
         backend = get_backend_type()
         conn = self._get_connection()
         messages_removed = 0
@@ -594,7 +610,7 @@ class SageMemory:
                         cur = conn.execute(
                             """
                             DELETE FROM memories
-                            WHERE source_chat_id = ? AND user_id = ? AND memory_tier = 'hot';
+                            WHERE source_chat_id = ? AND user_id = ?;
                             """,
                             (chat_id, user_id),
                         )
@@ -602,7 +618,7 @@ class SageMemory:
                         cur = conn.execute(
                             """
                             DELETE FROM memories
-                            WHERE source_chat_id = ? AND memory_tier = 'hot';
+                            WHERE source_chat_id = ?;
                             """,
                             (chat_id,),
                         )
@@ -625,7 +641,7 @@ class SageMemory:
                             cur.execute(
                                 """
                                 DELETE FROM memories
-                                WHERE source_chat_id = %s AND user_id = %s AND memory_tier = 'hot';
+                                WHERE source_chat_id = %s AND user_id = %s;
                                 """,
                                 (chat_id, user_id),
                             )
@@ -633,13 +649,18 @@ class SageMemory:
                             cur.execute(
                                 """
                                 DELETE FROM memories
-                                WHERE source_chat_id = %s AND memory_tier = 'hot';
+                                WHERE source_chat_id = %s;
                                 """,
                                 (chat_id,),
                             )
                         memories_removed = int(cur.rowcount or 0)
         finally:
             conn.close()
+        for memory in indexed_memories:
+            _sync_index_delete(
+                str(memory.get("memory_id") or ""),
+                str(memory.get("memory_tier") or "cold"),
+            )
         return {
             "messages_removed": messages_removed,
             "memories_removed": memories_removed,
@@ -1023,6 +1044,26 @@ class SageMemory:
         self.log_activity("DELETE", user_id=existing["user_id"], memory_id=memory_id, chat_id=existing.get("source_chat_id"), details="Marked deleted")
         return True
 
+    def hard_delete_memory(self, memory_id: str) -> bool:
+        """Permanently remove one memory record and its vector representation."""
+        existing = self.get_memory(memory_id)
+        if not existing:
+            return False
+        backend = get_backend_type()
+        conn = self._get_connection()
+        try:
+            if backend == "sqlite":
+                with conn:
+                    conn.execute("DELETE FROM memories WHERE memory_id = ?;", (memory_id,))
+            else:
+                with conn:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM memories WHERE memory_id = %s;", (memory_id,))
+        finally:
+            conn.close()
+        _sync_index_delete(memory_id, existing.get("memory_tier"))
+        return True
+
     def supersede_memory(
         self,
         old_memory_id: str,
@@ -1361,6 +1402,32 @@ class SageMemory:
         finally:
             conn.close()
         return events
+
+    def hard_delete_activity(self, activity_ids: List[str], user_id: str) -> int:
+        """Permanently remove selected audit rows belonging to one user."""
+        ids = [str(activity_id).strip() for activity_id in activity_ids if str(activity_id).strip()]
+        if not ids or not user_id:
+            return 0
+        backend = get_backend_type()
+        conn = self._get_connection()
+        try:
+            if backend == "sqlite":
+                placeholders = ", ".join("?" for _ in ids)
+                with conn:
+                    cursor = conn.execute(
+                        f"DELETE FROM memory_activity WHERE user_id = ? AND activity_id IN ({placeholders});",
+                        [user_id, *ids],
+                    )
+                    return max(0, int(cursor.rowcount))
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM memory_activity WHERE user_id = %s AND activity_id = ANY(%s);",
+                        (user_id, ids),
+                    )
+                    return max(0, int(cur.rowcount))
+        finally:
+            conn.close()
 
     def reindex_memories(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Reindex active canonical memories from PostgreSQL/SQLite into Chroma vector store."""

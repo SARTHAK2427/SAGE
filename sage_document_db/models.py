@@ -144,6 +144,7 @@ class RagResult:
     code_refs: list[str] = field(default_factory=list)
 
     derived_cache_ref: str | None = None
+    reranker_score: float | None = None
 
     @property
     def raw_distance(self) -> float:
@@ -160,7 +161,7 @@ class RagResult:
         return round(max(0.0, min(1.0, 1.0 - float(self.distance))), 4)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "record_id": self.record_id,
             "origin": self.origin,
             "record_type": self.record_type,
@@ -177,6 +178,9 @@ class RagResult:
             "code_refs": list(self.code_refs),
             "derived_cache_ref": self.derived_cache_ref,
         }
+        if self.reranker_score is not None:
+            result["reranker_score"] = float(self.reranker_score)
+        return result
 
     def to_socket(self) -> dict:
         return self.to_dict()

@@ -22,7 +22,7 @@ def _default_profile() -> Dict[str, Any]:
         "roles": {
             "gemma": {"provider": "local_gpu", "connection_id": None, "model_id": "gemma"},
             "qwen": {"provider": "local_gpu", "connection_id": None, "model_id": "qwen"},
-            "memory": {"provider": "disabled", "connection_id": None, "model_id": "memory"},
+            "memory": {"provider": "local_cpu", "connection_id": None, "model_id": "memory"},
         },
         "configured": False,
         "revision": 0,
@@ -75,17 +75,12 @@ class RuntimeConfigStore:
         roles: Dict[str, Dict[str, Any]] = {}
         for role in ROLE_NAMES:
             raw = incoming_roles.get(role) or {}
-            provider = str(raw.get("provider") or ("disabled" if role == "memory" else "local_gpu"))
-            if role == "memory":
-                # Flash 2B / remote / CPU compressor is retired. Chat continuity
-                # and durable facts live only in the local sage_memory ledger.
-                provider = "disabled"
-                connection_id = None
+            provider = str(raw.get("provider") or ("local_cpu" if role == "memory" else "local_gpu"))
             if provider not in PROVIDERS:
                 raise ValueError(f"Unsupported provider for {role}: {provider}")
             if role in {"gemma", "qwen"} and provider in {"disabled", "local_cpu"}:
                 raise ValueError(f"{role} must use local_gpu or remote")
-            connection_id = raw.get("connection_id") if role != "memory" else None
+            connection_id = raw.get("connection_id")
             if provider == "remote" and connection_id not in connections:
                 raise ValueError(f"{role} refers to an unknown remote connection")
             roles[role] = {

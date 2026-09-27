@@ -33,6 +33,7 @@ venv.bak/
 artifacts/
 chroma_db/
 temp/
+data/
 logs/
 *.log
 *.sqlite
@@ -83,3 +84,6 @@ Desktop.ini
 chroma_db_migrated_backup/
 sage_memory_data/
 scratch/
+
+# Local architecture notes, handoffs, and implementation plans
+/notes/

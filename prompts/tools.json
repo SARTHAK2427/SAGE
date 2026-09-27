@@ -345,10 +345,11 @@
         },
         {
           "name": "memory_search_cold",
-          "description": "Search active durable cold memories for the user across all conversations.",
+          "description": "Search compressed episodic memory from this chat, global user memory, or both. Chroma finds candidate IDs and the canonical database hydrates the records.",
           "arguments": {
             "query":    {"type": ["string", "null"], "required": false, "description": "Semantic query describing durable preferences or facts to retrieve."},
             "category": {"type": ["string", "null"], "required": false, "enum": ["fact", "preference", "project", "decision", "instruction"]},
+            "scope":    {"type": "string", "required": false, "enum": ["cold", "global", "both"], "description": "cold = older memories from this chat; global = cross-chat user facts; both = both scopes."},
             "limit":    {"type": "integer",          "required": false, "description": "Max results to return (1-20, default 5)."}
           },
           "returns": {

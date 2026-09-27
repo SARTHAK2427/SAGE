@@ -211,6 +211,8 @@ class FlashTransport:
                     '"[Mock mode] SAGE Flash is running without local GGUF models. '
                     'Configure a remote GPU in Settings → Flash runtime, or install llama-server and the catalog models."}'
                 )
+            elif role == "memory":
+                content = '{"memories":[]}'
             else:
                 content = "Mock worker response."
             return {"content": content, "duration": 0.001, "usage": {}, "timings": {}, "raw": {}}

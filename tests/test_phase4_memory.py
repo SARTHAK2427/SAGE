@@ -42,10 +42,11 @@ def use_sqlite_and_temp_chroma(tmp_path):
 def test_embedding_generation():
     """A. Embedding generation: Verify valid embedding vector is generated locally."""
     from sage_document_db.embeddings import EmbeddingService
+    from sage_document_db.config import EMBEDDING_DIMENSION
     emb_svc = EmbeddingService()
     vec = emb_svc.embed_query("Test embedding generation")
     assert isinstance(vec, list)
-    assert len(vec) == 384
+    assert len(vec) == EMBEDDING_DIMENSION
 
 
 def test_postgresql_to_chroma_indexing():

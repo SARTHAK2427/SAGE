@@ -19,7 +19,7 @@ import subprocess
 import traceback
 
 # Load .env via config module (stdlib-only parser already handles this)
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import config
 
 PASS = "[PASS]"

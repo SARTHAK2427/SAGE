@@ -42,6 +42,7 @@ class SageDocumentDB:
         from .chroma_store import ChromaStore
         from .embeddings import EmbeddingService
         from .retrieval import RetrievalService
+        from .reranker import RerankService
 
         self._artifacts_root = Path(artifacts_root)
         self._chroma_root = Path(chroma_root)
@@ -63,8 +64,12 @@ class SageDocumentDB:
             artifacts_root=self._artifacts_root,
         )
 
+        # Disabled by default; its heavy model is only loaded when the user
+        # explicitly enables SAGE_RERANKER_ENABLED.
+        self.reranker = RerankService()
+
         # Retrieval facade
-        self._retrieval = RetrievalService(self._chroma, self._store)
+        self._retrieval = RetrievalService(self._chroma, self._store, rerank_service=self.reranker)
 
     # ------------------------------------------------------------------
     # Ingestion

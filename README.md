@@ -70,7 +70,6 @@ SAGE/
 ├── app.py                     # FastAPI web application & upload handler
 ├── config.py                  # Consolidated runtime paths, ports & model configs
 ├── db_service.py              # Process-level SageDocumentDB singleton
-├── manual_db_test.py          # Standalone CLI document database test harness
 ├── model_client.py            # HTTP client for llama.cpp server
 ├── model_manager.py           # Sequential model loading and lifecycle management
 ├── orchestrator.py            # Main agent loop, JSON repair & dispatcher wiring
@@ -136,16 +135,16 @@ pytest tests/
 ### 3. Test the Document Database Directly
 ```bash
 # Ingest a document
-python manual_db_test.py ingest "sample.pdf" --debug
+python -m scripts.manual_db_test ingest "sample.pdf" --debug
 
 # Semantic RAG search
-python manual_db_test.py rag "quarterly performance summary" --top-k 3
+python -m scripts.manual_db_test rag "quarterly performance summary" --top-k 3
 
 # Exact search
-python manual_db_test.py exact "INV-2026-004"
+python -m scripts.manual_db_test exact "INV-2026-004"
 
 # Direct element fetch
-python manual_db_test.py fetch doc_a81f42c91e txt_000001
+python -m scripts.manual_db_test fetch doc_a81f42c91e txt_000001
 ```
 
 ### 4. Start the SAGE Web Application

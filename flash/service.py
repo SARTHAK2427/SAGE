@@ -12,12 +12,17 @@ from typing import Any, Dict, List
 
 import config
 from core.json_repair import clean_json_string
+from core.observer import observer
 from flash.transport import flash_transport
+from flash.runtime_config import runtime_config
+from memory_system.coordinator import memory_coordinator
 
 
 VALID_CASES = {"A", "B", "C", "D"}
 IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "webp", "gif", "bmp"}
 TEXT_SUFFIXES = {"txt", "md", "csv", "json", "log", "py", "js", "html", "xml", "yaml", "yml"}
+ATTACHMENT_EVIDENCE_PREFIX = "CHAT ATTACHMENT EVIDENCE"
+ATTACHMENT_EVIDENCE_MAX_CHARS = 9000
 
 
 def _prompt(name: str) -> str:
@@ -51,13 +56,30 @@ def _image_parts(file_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     return parts
 
 
+def _has_readable_images(file_map: Dict[str, Dict[str, Any]]) -> bool:
+    """Whether this turn contains an image Qwen can actually receive."""
+    for info in file_map.values():
+        if str(info.get("type", "")).lower() not in IMAGE_SUFFIXES:
+            continue
+        if Path(str(info.get("path") or "")).is_file():
+            return True
+    return False
+
+
 def _document_context(
     objective: str,
     attachments: List[Dict[str, Any]],
     file_map: Dict[str, Dict[str, Any]],
     max_chars: int = 16000,
+    run_id: str | None = None,
 ) -> str:
-    """Build the shared-pool text that Gemma can actually reason over."""
+    """Build grounded document context for Gemma.
+
+    Plain-text direct attachments remain readable without loading the document
+    index. Ingested documents use the rich Daksh RAG socket so retrieval input,
+    ranked output, model configuration, reranking, timing, and failures are all
+    visible in SAGE Observer instead of being silently discarded.
+    """
     chunks: List[str] = []
     remaining = max_chars
     for item in attachments:
@@ -73,18 +95,61 @@ def _document_context(
             if path.is_file():
                 text = path.read_text(encoding="utf-8", errors="replace")
         elif item.get("doc_id") and suffix not in IMAGE_SUFFIXES:
+            doc_id = str(item["doc_id"])
+            query = objective.strip() or "document overview"
+            retrieval_started = time.perf_counter()
+            if run_id:
+                observer.emit(
+                    run_id, "document-rag", "semantic_search", "started",
+                    f"Searching {name} with BGE document retrieval",
+                    {"query": query, "doc_ids": [doc_id], "top_k": 8, "attachment_ref": ref},
+                )
             try:
                 from db_service import document_db
-                results = document_db.rag_search(
-                    query=objective or "document overview",
-                    doc_ids=[str(item["doc_id"])],
+                socket = document_db.rag_search_socket(
+                    query=query,
+                    doc_ids=[doc_id],
                     top_k=8,
                 )
-                text = "\n\n".join(result.text for result in results if getattr(result, "text", None))
-            except Exception:
+                if socket.get("status") != "success":
+                    error = socket.get("error") or {}
+                    raise RuntimeError(str(error.get("message") or "Document RAG search failed"))
+                records = (socket.get("result") or {}).get("records") or []
+                retrieved: List[str] = []
+                for record in records:
+                    record_text = str(record.get("text") or "").strip()
+                    if not record_text:
+                        continue
+                    provenance = [
+                        f"record={record.get('record_id')}",
+                        f"doc={record.get('doc_id') or doc_id}",
+                    ]
+                    if record.get("page") is not None:
+                        provenance.append(f"page={record.get('page')}")
+                    if record.get("reranker_score") is not None:
+                        provenance.append(f"reranker_score={record.get('reranker_score')}")
+                    elif record.get("derived_cosine_similarity") is not None:
+                        provenance.append(f"similarity={record.get('derived_cosine_similarity')}")
+                    retrieved.append(f"[RAG {'; '.join(provenance)}]\n{record_text}")
+                text = "\n\n".join(retrieved)
+                if run_id:
+                    observer.emit(
+                        run_id, "document-rag", "semantic_search", "completed",
+                        f"Retrieved {len(retrieved)} grounded passages from {name}",
+                        socket,
+                        duration_ms=float((socket.get("timing") or {}).get("duration_ms") or 0.0),
+                    )
+            except Exception as exc:
                 # Ingestion metadata still reaches Gemma; retrieval failure should
                 # not discard an otherwise answerable request.
                 text = ""
+                if run_id:
+                    observer.emit(
+                        run_id, "document-rag", "semantic_search", "failed",
+                        f"Could not retrieve passages from {name}",
+                        {"query": query, "doc_ids": [doc_id], "attachment_ref": ref, "error": str(exc)},
+                        duration_ms=(time.perf_counter() - retrieval_started) * 1000,
+                    )
         if text:
             excerpt = text[:remaining]
             chunks.append(f"DOCUMENT [{ref}] {name}:\n{excerpt}")
@@ -92,98 +157,120 @@ def _document_context(
     return "\n\n".join(chunks)
 
 
-def _durable_memory_context(session_id: str, user_id: str) -> str:
-    """Build bounded Flash context from the canonical durable-memory store.
+def _recent_attachment_evidence(chat_id: str, user_id: str, max_chars: int = 9000) -> tuple[str, List[str]]:
+    """Return prior grounded attachment evidence for this chat only.
 
-    Flash remains the request controller, but its session and long-term context
-    must come from the same SQLite/PostgreSQL ledger used by the rest of SAGE.
-    The database is authoritative; an unavailable memory backend must never
-    prevent a Flash response.
+    This is deliberately separate from general Cold-memory retrieval: an image
+    or document reviewed one turn ago must remain available even when a tiny
+    routing model does not formulate the perfect semantic retrieval query.
     """
     try:
         from sage_memory import sage_memory
-
-        lines: List[str] = []
-        total_budget = max(0, config.SAGE_CONTEXT_MEMORY_BUDGET_TOKENS)
-        global_budget = min(total_budget, max(0, config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS))
-
-        def token_count(value: str) -> int:
-            return len(value.split())
-
-        def bounded_block(header: str, entries: List[str], budget: int) -> str:
-            selected: List[str] = []
-            used = token_count(header)
-            for entry in entries:
-                entry_tokens = token_count(entry)
-                if used + entry_tokens > budget:
-                    continue
-                selected.append(entry)
-                used += entry_tokens
-            return header + "\n" + "\n".join(selected) if selected else ""
-
-        recent_messages = sage_memory.get_messages(session_id)
-        if recent_messages:
-            recent_lines = [
-                f"{message.get('role', 'unknown')}: {message.get('content', '')}"
-                for message in recent_messages[-max(1, config.SAGE_RECENT_CHAT_MAX_MESSAGES):]
-            ]
-            recent_block = bounded_block(
-                "RECENT CONVERSATION:",
-                recent_lines,
-                max(0, total_budget - global_budget),
-            )
-            if recent_block:
-                lines.append(recent_block)
-
-        hot_memories = sage_memory.list_memories(
-            user_id=user_id,
-            memory_tier="hot",
-            chat_id=session_id,
-            limit=5,
+        records = sage_memory.list_memories(
+            user_id=user_id, category="summary", memory_tier="cold", chat_id=chat_id, limit=80,
         )
-        if hot_memories:
-            hot_block = bounded_block(
-                "SESSION MEMORY:",
-                [
-                    f"- [{memory.get('category', 'fact')}] {memory.get('content', '')}"
-                    for memory in hot_memories
-                ],
-                max(0, total_budget - global_budget - token_count("\n\n".join(lines))),
-            )
-            if hot_block:
-                lines.append(hot_block)
+    except Exception:
+        return "", []
+    evidence = [record for record in records if str(record.get("content") or "").startswith(ATTACHMENT_EVIDENCE_PREFIX)]
+    selected: List[str] = []
+    selected_ids: List[str] = []
+    remaining = max_chars
+    # list_memories is newest-first; retain that ordering for natural follow-up.
+    for record in evidence:
+        content = str(record.get("content") or "")
+        if remaining <= 0:
+            break
+        excerpt = content[:remaining]
+        selected.append(excerpt)
+        selected_ids.append(str(record.get("memory_id") or ""))
+        remaining -= len(excerpt)
+    return "\n\n---\n\n".join(selected), [memory_id for memory_id in selected_ids if memory_id]
 
-        cold_memories = sage_memory.list_memories(
+
+def _global_memory_context(user_id: str) -> tuple[str, List[str]]:
+    """Load a small, canonical cross-chat profile without semantic retrieval.
+
+    This is intentionally a SQL read, not BGE/Chroma RAG. Stable Global
+    records must be reliably available in every chat, including a greeting or
+    a direct identity question, while keeping the latency-sensitive Flash path
+    free of embedding-model startup.
+    """
+    try:
+        from memory_system.quality import is_valid_memory
+        from sage_memory import sage_memory
+
+        records = sage_memory.list_memories(
             user_id=user_id,
             memory_tier="cold",
-            limit=max(1, config.SAGE_GLOBAL_MEMORY_MAX_ITEMS),
+            status="active",
+            limit=max(20, config.SAGE_GLOBAL_MEMORY_MAX_ITEMS * 4),
         )
-        if cold_memories:
-            cold_block = bounded_block(
-                "PERSISTENT MEMORY:",
-                [
-                    f"- [{memory.get('category', 'fact')}] {memory.get('content', '')}"
-                    for memory in cold_memories
-                ],
-                global_budget,
-            )
-            if cold_block:
-                lines.append(cold_block)
-        return "\n\n".join(lines)
     except Exception:
-        return ""
+        return "", []
+
+    selected: List[str] = []
+    selected_ids: List[str] = []
+    remaining_tokens = max(0, config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS)
+    for record in records:
+        # Global facts deliberately have no source chat. Cold records remain
+        # chat-scoped and must not leak into every unrelated conversation.
+        if record.get("source_chat_id") or record.get("category") != "personal":
+            continue
+        content = str(record.get("content") or "").strip()
+        if not content or not is_valid_memory(content, "global"):
+            continue
+        estimated_tokens = max(1, (len(content) + 3) // 4)
+        if selected and estimated_tokens > remaining_tokens:
+            continue
+        if estimated_tokens > remaining_tokens:
+            content = content[:remaining_tokens * 4].rstrip()
+            estimated_tokens = max(1, (len(content) + 3) // 4)
+        if not content:
+            break
+        memory_id = str(record.get("memory_id") or "")
+        selected.append(f"[GLOBAL MEMORY {memory_id}] {content}")
+        if memory_id:
+            selected_ids.append(memory_id)
+        remaining_tokens -= estimated_tokens
+        if len(selected) >= config.SAGE_GLOBAL_MEMORY_MAX_ITEMS or remaining_tokens <= 0:
+            break
+    return "\n".join(selected), selected_ids
 
 
-def _persist_flash_turn(session_id: str, user_id: str, objective: str, answer: str) -> None:
-    """Persist a completed Flash turn without making storage a response dependency."""
+def _store_attachment_evidence(
+    *, chat_id: str, user_id: str, attachments: List[Dict[str, Any]],
+    document_context: str, visual_evidence: str, run_id: str,
+) -> List[str]:
+    """Persist grounded attachment output as chat-scoped, immediately usable memory."""
+    if not attachments:
+        return []
+    attachment_labels = [
+        f"{item.get('name') or item.get('ref') or 'attachment'}"
+        f" ({item.get('type') or 'unknown'})"
+        for item in attachments
+    ]
+    parts = [f"{ATTACHMENT_EVIDENCE_PREFIX}\nAttachments: " + ", ".join(attachment_labels)]
+    if document_context.strip():
+        parts.append("DOCUMENT EXCERPTS / RETRIEVAL:\n" + document_context.strip())
+    if visual_evidence.strip():
+        parts.append("VISION EVIDENCE (Qwen, grounded in the uploaded image):\n" + visual_evidence.strip())
+    if len(parts) == 1:
+        return []
+    content = "\n\n".join(parts)[:ATTACHMENT_EVIDENCE_MAX_CHARS]
     try:
         from sage_memory import sage_memory
-        sage_memory.write_message(session_id, user_id, "user", objective)
-        sage_memory.write_message(session_id, user_id, "assistant", answer)
-    except Exception:
-        # Flash must remain available if an optional local/remote memory backend
-        # is misconfigured or temporarily unavailable.
-        return
+        stored = sage_memory.store_memory(
+            user_id=user_id, content=content, category="summary", importance=0.9, confidence=0.95,
+            source_chat_id=chat_id, memory_tier="cold",
+        )
+        memory_id = str(stored.get("memory_id") or "")
+        observer.emit(run_id, "memory", "attachment_evidence", "completed", "Stored chat-scoped attachment evidence",
+                      {"memory_id": memory_id, "attachments": attachment_labels, "characters": len(content)})
+        return [memory_id] if memory_id else []
+    except Exception as exc:
+        observer.emit(run_id, "memory", "attachment_evidence", "failed", "Attachment evidence was not persisted",
+                      {"error": str(exc), "attachments": attachment_labels})
+        return []
 
 
 class FlashService:
@@ -194,43 +281,154 @@ class FlashService:
         attachments: List[Dict[str, Any]],
         file_map: Dict[str, Dict[str, Any]],
         session_id: str | None = None,
+        observer_run_id: str | None = None,
         user_id: str | None = None,
         temperature: float | None = None,
         save_history: bool = True,
     ) -> Dict[str, Any]:
         started = time.perf_counter()
         session_id = (session_id or "").strip() or f"flash_{uuid.uuid4().hex[:12]}"
+        run_id = (observer_run_id or "").strip() or session_id
         user_id = (user_id or config.DEFAULT_USER_ID).strip() or config.DEFAULT_USER_ID
-        durable_memory = _durable_memory_context(session_id, user_id) if save_history else ""
+        observer.emit(run_id, "sage", "request", "started", "Flash request accepted",
+                      {"objective": objective, "attachments": attachments, "save_history": save_history})
+        recent = memory_coordinator.recent_turns(
+            session_id,
+            max_turns=config.SAGE_RECENT_CHAT_MAX_TURNS,
+            token_budget=config.SAGE_RECENT_CHAT_BUDGET_TOKENS,
+        ) if save_history else {"text": "", "turn_count": 0, "token_estimate": 0}
         attachment_summary = [
             {k: item.get(k) for k in ("ref", "name", "type", "doc_id", "status")}
             for item in attachments
         ]
         context_sections: List[str] = []
-        if durable_memory:
-            context_sections.append(durable_memory)
-        current_turn = "CURRENT USER REQUEST (authoritative):\n" + objective.strip()
+        if recent.get("text"):
+            context_sections.append("RECENT CONVERSATION (verbatim, bounded):\n" + str(recent["text"]))
+        recalled_memory_ids: List[str] = []
+        attachment_memory_ids: List[str] = []
+        memory_recall_seconds = 0.0
+        global_context = ""
+        if save_history:
+            attachment_evidence, attachment_memory_ids = _recent_attachment_evidence(session_id, user_id)
+            if attachment_evidence:
+                context_sections.append("CHAT-SCOPED ATTACHMENT EVIDENCE (grounded prior image/document analysis; use it for follow-ups without requesting re-upload):\n" + attachment_evidence)
+            global_context, global_memory_ids = _global_memory_context(user_id)
+            if global_context:
+                recalled_memory_ids.extend(global_memory_ids)
+        current_turn = "CURRENT USER MESSAGE (authoritative):\n" + objective.strip()
+        shared_text = ""
         if attachment_summary:
             current_turn += "\n\nCURRENT-TURN ATTACHMENTS:\n" + json.dumps(attachment_summary, ensure_ascii=False)
-            shared_text = _document_context(objective, attachments, file_map)
+            shared_text = _document_context(objective, attachments, file_map, run_id=run_id)
             if shared_text:
                 current_turn += "\n\nCURRENT-TURN SHARED DOCUMENT CONTENT:\n" + shared_text
         context_sections.append(current_turn)
         user_context = "\n\n---\n\n".join(context_sections)
+        observer.emit(run_id, "memory", "recent_context", "completed",
+                      f"Selected {recent.get('turn_count', 0)} recent turns",
+                      {"turn_count": recent.get("turn_count", 0), "token_estimate": recent.get("token_estimate", 0),
+                       "context": recent.get("text", ""), "global_memory_ids": recalled_memory_ids})
 
+        gemma_system = _prompt("flash_system.txt")
+        if global_context:
+            gemma_system += (
+                "\n\nAUTHORITATIVE KNOWN USER PERSONAL INFORMATION:\n"
+                + global_context
+                + "\nUse applicable facts here as known user information. "
+                  "Do not say an applicable supplied fact is unknown."
+            )
+        gemma_messages = [
+            {"role": "system", "content": gemma_system},
+            {"role": "user", "content": user_context},
+        ]
+        observer.emit(run_id, "gemma", "model_input", "started", "Sent routing request to Gemma",
+                      {"messages": gemma_messages, "json_mode": True, "temperature": temperature,
+                       "provider": runtime_config.role("gemma").get("provider")})
         gemma = flash_transport.invoke(
             "gemma",
-            [
-                {"role": "system", "content": _prompt("flash_system.txt")},
-                {"role": "user", "content": user_context},
-            ],
+            gemma_messages,
             json_mode=True,
             temperature=temperature,
         )
+        observer.emit(run_id, "gemma", "model_output", "completed", "Gemma returned a routing decision",
+                      {"content": gemma.get("content", ""), "usage": gemma.get("usage", {}), "timings": gemma.get("timings", {}),
+                       "provider": runtime_config.role("gemma").get("provider")},
+                      duration_ms=float(gemma.get("duration", 0)) * 1000)
+        gemma_total_duration = float(gemma.get("duration", 0))
         route = _parse_route(gemma["content"])
+        memory_request = route.get("memory") if isinstance(route.get("memory"), dict) else None
+        if memory_request:
+            recall_started = time.perf_counter()
+            query = str(memory_request.get("query") or objective).strip()
+            scope = str(memory_request.get("scope") or "both").lower()
+            if scope not in {"cold", "global", "both"}:
+                scope = "both"
+            recalled = memory_coordinator.search(
+                query=query, user_id=user_id, chat_id=session_id, scope=scope,
+                limit=config.SAGE_MEMORY_RECALL_LIMIT, run_id=run_id,
+            )
+            recalled_memory_ids = list(dict.fromkeys([
+                *recalled_memory_ids,
+                *[str(item.get("memory_id")) for item in recalled["memories"]],
+            ]))
+            recall_messages = [
+                {"role": "system", "content": gemma_system},
+                {"role": "user", "content": user_context},
+                {"role": "user", "content": "MEMORY SEARCH RESULTS (authoritative records):\n" + (recalled["context"] or "No relevant memory was found.") + "\n\nNow answer the current user message. Do not request memory again."},
+            ]
+            observer.emit(run_id, "gemma", "model_input", "started", "Returned hydrated memory records to Gemma",
+                          {"messages": recall_messages, "memory_ids": recalled_memory_ids,
+                           "provider": runtime_config.role("gemma").get("provider")})
+            gemma = flash_transport.invoke("gemma", recall_messages, json_mode=True, temperature=temperature)
+            observer.emit(run_id, "gemma", "model_output", "completed", "Gemma completed routing after memory recall",
+                          {"content": gemma.get("content", ""), "usage": gemma.get("usage", {}),
+                           "provider": runtime_config.role("gemma").get("provider")},
+                          duration_ms=float(gemma.get("duration", 0)) * 1000)
+            gemma_total_duration += float(gemma.get("duration", 0))
+            route = _parse_route(gemma["content"])
+            memory_recall_seconds += time.perf_counter() - recall_started
         case = str(route.get("flash_case") or "A").upper()
         if case not in VALID_CASES:
             case = "A"
+
+        # Qwen receives direct image files only.  A PDF/document may already
+        # have supplied grounded text through the document RAG above, but it
+        # cannot be handed to Qwen as pixels.  Let Gemma correct an accidental
+        # visual route using that supplied evidence instead of failing a valid
+        # document request or applying a brittle static route override.
+        if case in {"B", "C", "D"} and shared_text and not _has_readable_images(file_map):
+            correction = (
+                "ROUTE CORRECTION — CAPABILITY BOUNDARY:\n"
+                "There is no readable image attachment available to Qwen on this turn. "
+                "The current attachment is a document, and CURRENT-TURN SHARED DOCUMENT CONTENT "
+                "contains its grounded excerpts. Answer the user's request from that evidence. "
+                "Return exactly a Case A JSON response with a complete gemma_answer. Do not delegate to Qwen."
+            )
+            correction_messages = [
+                {"role": "system", "content": gemma_system},
+                {"role": "user", "content": user_context},
+                {"role": "user", "content": correction},
+            ]
+            observer.emit(run_id, "gemma", "route_correction_input", "started",
+                          "Requested document-compatible route correction from Gemma",
+                          {"messages": correction_messages, "previous_route": route,
+                           "provider": runtime_config.role("gemma").get("provider")})
+            corrected = flash_transport.invoke("gemma", correction_messages, json_mode=True, temperature=temperature)
+            observer.emit(run_id, "gemma", "route_correction_output", "completed",
+                          "Gemma returned a document-compatible route",
+                          {"content": corrected.get("content", ""), "usage": corrected.get("usage", {}),
+                           "timings": corrected.get("timings", {}),
+                           "provider": runtime_config.role("gemma").get("provider")},
+                          duration_ms=float(corrected.get("duration", 0)) * 1000)
+            gemma_total_duration += float(corrected.get("duration", 0))
+            route = _parse_route(corrected["content"])
+            case = str(route.get("flash_case") or "A").upper()
+            if case not in VALID_CASES:
+                case = "A"
+            if case in {"B", "C", "D"}:
+                raise RuntimeError("Gemma could not select a document-compatible Flash route")
+        observer.emit(run_id, "gemma", "route_decision", "completed", f"Selected Flash Case {case}",
+                      {"flash_case": case, "route": route})
 
         gemma_answer = str(route.get("gemma_answer") or "").strip()
         qwen_result = ""
@@ -248,6 +446,9 @@ class FlashService:
                 {"type": "text", "text": str(qwen_task.get("request") or "Inspect the image precisely.")},
                 *images,
             ]
+            observer.emit(run_id, "qwen", "model_input", "started", "Sent delegated visual task to Qwen",
+                          {"instruction": qwen_task.get("request"), "image_count": len(images),
+                           "provider": runtime_config.role("qwen").get("provider")})
             qwen = flash_transport.invoke(
                 "qwen",
                 [
@@ -258,19 +459,30 @@ class FlashService:
             )
             qwen_result = qwen["content"].strip()
             qwen_duration = qwen["duration"]
+            observer.emit(run_id, "qwen", "model_output", "completed", "Qwen returned grounded visual evidence",
+                          {"content": qwen_result, "usage": qwen.get("usage", {}),
+                           "provider": runtime_config.role("qwen").get("provider")}, duration_ms=qwen_duration * 1000)
 
             if case == "C" or qwen_task.get("final") is False:
+                synth_messages = [
+                    {"role": "system", "content": "Answer the original request using the visual evidence. Return plain text."},
+                    {"role": "user", "content": objective.strip()},
+                    {"role": "user", "content": f"QWEN VISUAL EVIDENCE:\n{qwen_result}"},
+                ]
+                observer.emit(run_id, "gemma", "synthesis_input", "started", "Sent visual evidence back to Gemma",
+                              {"messages": synth_messages, "provider": runtime_config.role("gemma").get("provider")})
                 synth = flash_transport.invoke(
                     "gemma",
-                    [
-                        {"role": "system", "content": "Answer the original request using the visual evidence. Return plain text."},
-                        {"role": "user", "content": objective.strip()},
-                        {"role": "user", "content": f"QWEN VISUAL EVIDENCE:\n{qwen_result}"},
-                    ],
+                    synth_messages,
                     temperature=temperature,
                 )
                 gemma_answer = synth["content"].strip()
                 synth_duration = synth["duration"]
+                gemma_total_duration += float(synth_duration)
+                observer.emit(run_id, "gemma", "synthesis_output", "completed", "Gemma synthesized the final answer",
+                              {"content": gemma_answer, "usage": synth.get("usage", {}),
+                               "provider": runtime_config.role("gemma").get("provider")},
+                              duration_ms=float(synth_duration) * 1000)
 
         if case == "A":
             answer = gemma_answer or gemma["content"]
@@ -284,20 +496,45 @@ class FlashService:
             raise RuntimeError("Flash completed without producing an answer")
 
         if save_history:
-            _persist_flash_turn(session_id, user_id, objective.strip(), answer)
+            attachment_memory_ids.extend(_store_attachment_evidence(
+                chat_id=session_id, user_id=user_id, attachments=attachments,
+                document_context=shared_text, visual_evidence=qwen_result, run_id=run_id,
+            ))
+        if save_history:
+            try:
+                persisted = memory_coordinator.persist_turn(
+                    chat_id=session_id, user_id=user_id, user_text=objective.strip(), answer=answer, run_id=run_id
+                )
+                memory_jobs = persisted.get("memory_jobs", [])
+            except Exception as exc:
+                memory_jobs = []
+                observer.emit(run_id, "memory", "conversation_commit", "failed", "Chat remained available but persistence failed", {"error": str(exc)})
+        else:
+            memory_jobs = []
+        observer.emit(run_id, "sage", "request", "completed", "Flash request completed",
+                      {"flash_case": case, "answer": answer, "recalled_memory_ids": recalled_memory_ids,
+                       "attachment_memory_ids": attachment_memory_ids, "memory_jobs": memory_jobs},
+                      duration_ms=(time.perf_counter() - started) * 1000)
         return {
             "status": "success",
             "answer": answer,
             "flash_case": case,
             "session_id": session_id,
             "chat_id": session_id,
-            "memory_job": None,
+            "observer_run_id": run_id,
+            "memory_job": memory_jobs[0] if memory_jobs else None,
+            "memory_jobs": memory_jobs,
+            "recalled_memory_ids": recalled_memory_ids,
+            "attachment_memory_ids": attachment_memory_ids,
             "history_saved": bool(save_history),
             "telemetry": {
                 "mode": "flash",
-                "gemma_seconds": round(gemma["duration"], 4),
+                "gemma_seconds": round(gemma_total_duration, 4),
                 "qwen_seconds": round(qwen_duration, 4),
                 "synthesis_seconds": round(synth_duration, 4),
+                "memory_recall_seconds": round(memory_recall_seconds, 4),
+                "recent_turns": recent.get("turn_count", 0),
+                "recent_context_tokens": recent.get("token_estimate", 0),
                 "total_wall_time": round(time.perf_counter() - started, 4),
             },
         }

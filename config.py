@@ -4,14 +4,8 @@ from pathlib import Path
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent
-TEMP_DIR = BASE_DIR / "temp"
-PROMPTS_DIR = BASE_DIR / "prompts"
-STATIC_DIR = BASE_DIR / "static"
-ARTIFACTS_ROOT = Path(os.environ.get("SAGE_ARTIFACTS_ROOT", str(BASE_DIR / "artifacts")))
-MODEL_RUNTIME_ROOT = ARTIFACTS_ROOT / "model_runtime"
-CHROMA_ROOT = Path(os.environ.get("SAGE_CHROMA_ROOT", str(BASE_DIR / "chroma_db")))
 
-# .env loading (prioritizes local .env file)
+# .env loading must happen before resolving runtime paths.
 _env_file = BASE_DIR / ".env"
 if _env_file.is_file():
     try:
@@ -32,6 +26,21 @@ if _env_file.is_file():
         except Exception:
             pass
 
+# All generated local state lives under one root by default.  Each individual
+# path can still be overridden for a server, container, or external volume.
+DATA_ROOT = Path(os.environ.get("SAGE_DATA_ROOT", str(BASE_DIR / "data"))).expanduser().resolve()
+DOCUMENTS_ROOT = DATA_ROOT / "documents"
+MEMORY_ROOT = DATA_ROOT / "memory"
+RUNTIME_ROOT = DATA_ROOT / "runtime"
+TEMP_DIR = Path(os.environ.get("SAGE_TEMP_ROOT", str(RUNTIME_ROOT))).expanduser().resolve()
+PROMPTS_DIR = BASE_DIR / "prompts"
+STATIC_DIR = BASE_DIR / "static"
+ARTIFACTS_ROOT = Path(os.environ.get("SAGE_ARTIFACTS_ROOT", str(DOCUMENTS_ROOT / "artifacts"))).expanduser().resolve()
+MODEL_RUNTIME_ROOT = Path(os.environ.get("SAGE_MODEL_RUNTIME_ROOT", str(DATA_ROOT / "model_runtime"))).expanduser().resolve()
+# Conversational-memory vectors are distinct from document-RAG vectors.  The
+# old SAGE_CHROMA_ROOT remains a fallback only for existing custom deployments.
+CHROMA_ROOT = Path(os.environ.get("SAGE_MEMORY_CHROMA_ROOT", os.environ.get("SAGE_CHROMA_ROOT", str(MEMORY_ROOT / "chroma")))).expanduser().resolve()
+
 # Gemma Context Window
 GEMMA_CONTEXT = int(os.environ.get("GEMMA_CONTEXT", "16384"))
 
@@ -49,6 +58,8 @@ SAGE_DATABASE_URL = (
 
 # Ensure directories exist
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+(DOCUMENTS_ROOT).mkdir(parents=True, exist_ok=True)
+(MEMORY_ROOT).mkdir(parents=True, exist_ok=True)
 (TEMP_DIR / "logs").mkdir(parents=True, exist_ok=True)
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,6 +164,11 @@ SAGE_GLOBAL_MEMORY_MAX_ITEMS = int(
 SAGE_RECENT_CHAT_MAX_MESSAGES = int(
     os.environ.get("SAGE_RECENT_CHAT_MAX_MESSAGES", "5")
 )
+SAGE_RECENT_CHAT_MAX_TURNS = int(os.environ.get("SAGE_RECENT_CHAT_MAX_TURNS", "5"))
+SAGE_RECENT_CHAT_BUDGET_TOKENS = int(os.environ.get("SAGE_RECENT_CHAT_BUDGET_TOKENS", "2400"))
+SAGE_MEMORY_RECALL_LIMIT = int(os.environ.get("SAGE_MEMORY_RECALL_LIMIT", "6"))
+SAGE_MEMORY_CURATOR_ENABLED = os.environ.get("SAGE_MEMORY_CURATOR_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+SAGE_MEMORY_CURATOR_CHUNK_CHARS = int(os.environ.get("SAGE_MEMORY_CURATOR_CHUNK_CHARS", "12000"))
 
 # ── Code Execution Sandbox ────────────────────────────────────────────────────
 # Docker is the ONLY backend. No subprocess/local-execution fallback.

@@ -183,7 +183,7 @@ STARTUP_MODELS = [
         "mmproj": None,
         "gpu": 1,
         "context": 8192,
-        "reasoning": "on",
+        "reasoning": "off",
         "est_size_gib": 3.6,
         "token": None,
     },
@@ -294,21 +294,49 @@ There is no separate router-model inference. Routing and Gemma's useful work hap
 - Complex documents are ingested through the existing SAGE document database and relevant chunks are retrieved for Gemma.
 - Attachment metadata and registered document IDs remain compatible with the old architecture.
 
-## 9. Background memory
+## 9. Hot, Cold, and Global memory
 
-If enabled, the 2B memory role receives the completed user/assistant turn after the answer is ready. It creates a concise durable summary containing useful facts, preferences, commitments, and unresolved tasks.
+SAGE now uses three distinct layers:
 
-Important behavior:
+| Layer | Contents | Scope | How Gemma receives it |
+|---|---|---|---|
+| Hot | Last five completed user/assistant turns, verbatim but token-bounded | Current chat | Automatically in every request |
+| Cold | Curated episodic objects from older turns | Current chat | Only when Gemma requests a semantic lookup |
+| Global | Stable facts, preferences, instructions, projects, and decisions | All chats for the user | Only when Gemma requests a semantic lookup |
 
-- Memory work uses one bounded background worker.
-- It does not delay the foreground answer.
-- Recent summaries from the same chat session are added to later Gemma requests.
-- Memory summaries are isolated by session ID.
-- Clicking **Reset** clears summaries for the open session and creates a new session ID.
+After every completed turn, the 2B curator immediately checks for stable Global facts, preferences, durable projects, and lasting instructions. When a sixth completed turn arrives, the oldest turn also leaves Hot memory and is queued for separate Cold compression. Both jobs use a single bounded background worker after the visible answer is ready, so foreground chat is not delayed. Very large turns are chunked before curation.
 
-The Memory tab is not yet a full editor for these Flash summaries. The implemented role is currently the background compression path.
+The canonical messages, memory objects, jobs, and source IDs live in PostgreSQL or SQLite. Chroma is only a derived semantic index: it returns candidate IDs, and SAGE hydrates and authorizes the actual records from the relational database. A durable index outbox retries Chroma writes after temporary index failure.
 
-## 10. Chat-bar controls
+Gemma decides whether older memory is needed. It requests `cold`, `global`, or `both` with a focused query; SAGE performs the search and gives the hydrated records back to Gemma. There is no keyword guard and no automatic dump of every memory into every prompt.
+
+The **Memory** workspace shows:
+
+- **Hot Context (5 turns):** the current raw window;
+- **Chat Episodes:** Cold objects tied to the selected chat;
+- **Cross-chat Knowledge:** Global objects shared across chats;
+- compressed/derived records and operational activity.
+
+Clicking **Reset** deletes the open chat's raw ledger, its Cold objects, queued curator work, and corresponding derived vectors. It does not delete Global memory or other chats.
+
+## 10. Live Observer
+
+The right panel is driven by backend events rather than UI timers or keyword guesses. Its numbered cards run from top to bottom and use plain-language labels. Click any card to open the corresponding technical event, or click **Observer** for a compact live feed and then **Expand** for the full-screen timeline.
+
+The expanded Observer keeps the selected event stable while new events arrive. Its right side separates **Input**, **Output**, and **Routing, timing & metadata**, with the full sanitized JSON available in a collapsible section.
+
+It exposes sanitized operational data including:
+
+- recent-context selection and token estimate;
+- Gemma/Qwen/curator inputs and outputs;
+- route decisions and Flash case;
+- semantic queries, candidate IDs, and hydrated memory objects;
+- chunking and curator job lifecycle;
+- database commits, failures, durations, and completion.
+
+API keys, authorization values, passwords, access tokens, and base64 image bodies are redacted. Use **Export** in the expanded Observer to save the current run as JSON. Recent curator jobs and index-outbox events are also available at `/api/memory/jobs` and `/api/memory/index-outbox`.
+
+## 11. Chat-bar controls
 
 ### FLASH
 
@@ -329,7 +357,7 @@ The Reset button:
 
 It does not erase other conversations or their memories.
 
-## 11. Privacy and network behavior
+## 12. Privacy and network behavior
 
 When every enabled role is local, the network card reports local/air-gapped execution.
 
@@ -337,7 +365,7 @@ When any role is remote, it changes to **Private Remote GPU Active** and display
 
 Remote operation necessarily sends the relevant prompt and any required attachment data to the configured server. Whether that server is private and trustworthy is controlled by its operator.
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### Settings does not open
 
@@ -399,11 +427,14 @@ Changing GPU number cannot fix an invalid GGUF tensor shape; use a compatible mo
 ### Chat works but memory does not
 
 - Confirm memory is not Disabled.
-- Replace the placeholder memory catalog entry.
+- Confirm the memory catalog entry and local GGUF filename are exact.
 - Test the memory role and verify its exact remote model ID.
-- Remember that memory runs after the answer, so its failure does not fail foreground chat.
+- Global extraction is queued after every completed turn. Cold compression begins when a sixth completed turn pushes the oldest turn out of Hot memory.
+- Open the Memory workspace and hover the curator status pill to see queued/running/completed/failed job counts and the last runtime error.
+- Inspect the expanded Observer or `/api/memory/jobs?status=failed` for the exact failure.
+- Remember that curation runs after the answer, so its failure does not fail foreground chat.
 
-## 13. Fast operator checklists
+## 14. Fast operator checklists
 
 ### Local RTX checklist
 
@@ -411,7 +442,7 @@ Changing GPU number cannot fix an invalid GGUF tensor shape; use a compatible mo
 - Gemma/Qwen files present in `MODEL_DIR`.
 - Qwen `mmproj` present.
 - Local RTX selected.
-- Memory disabled for first test.
+- Memory set to Local CPU/RAM, or temporarily disabled while validating only the foreground pair.
 - Apply → Test → both foreground roles ready.
 
 ### Remote checklist

@@ -213,19 +213,24 @@ def test_4_user_isolation():
 
 # ── TEST 5: Cold cross-chat retrieval ─────────────────────────────────────────
 def test_5_cold_cross_chat_retrieval():
-    """User A / Chat 1 / Cold memory. Search from Chat 2: assert cold memory is available."""
+    """Only Global memory crosses chats; Cold episodic memory remains chat-scoped."""
     cold_res = memory_store_cold(
         user_id="user_alice",
         chat_id="chat_1",
+        content="Chat 1 is debugging a transient render issue.",
+        category="project",
+    )
+    cold_id = cold_res["memory"]["memory_id"]
+    global_res = memory_store_cold(
+        user_id="user_alice",
         content="I prefer dark mode in all UI applications.",
         category="preference",
     )
-    cold_id = cold_res["memory"]["memory_id"]
 
-    # Search cold from another chat context (cold search is user-level, not chat-scoped)
-    search_res = memory_search_cold(user_id="user_alice", query="UI preference dark mode")
+    search_res = memory_search_cold(user_id="user_alice", chat_id="chat_2", query="render issue dark mode", scope="both")
     retrieved_ids = [m["memory_id"] for m in search_res["memories"]]
-    assert cold_id in retrieved_ids
+    assert cold_id not in retrieved_ids
+    assert global_res["memory"]["memory_id"] in retrieved_ids
 
 
 # ── TEST 6: Hot does not leak cross-chat ──────────────────────────────────────
@@ -274,7 +279,7 @@ def test_7_promotion():
     assert hot_id not in hot_ids
 
     # Cold search SHOULD return the promoted cold memory
-    cold_search = memory_search_cold(user_id="user_alice", query="local models")
+    cold_search = memory_search_cold(user_id="user_alice", chat_id="chat_1", query="local models", scope="cold")
     cold_ids = [m["memory_id"] for m in cold_search["memories"]]
     assert hot_id in cold_ids
 

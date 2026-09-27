@@ -570,7 +570,7 @@
                     </div>
                     <div class="mv-status-item">
                         <span class="mv-status-label">Model Runtime:</span>
-                        <span class="mv-status-pill pill-model-unavail" id="mvModelStatusPill" title="SAGE model weights not installed on this host. Deterministic memory store, retrieval, budgeting, and tool dispatcher are fully active."><span class="mv-dot orange"></span><span>MODEL UNAVAILABLE</span></span>
+                        <span class="mv-status-pill pill-model-unavail" id="mvModelStatusPill" title="The curator extracts durable global facts after every completed turn and compresses chat episodes when they leave Hot memory."><span class="mv-dot orange"></span><span>2B CURATOR</span></span>
                     </div>
                 </div>
                 <div class="mv-status-actions">
@@ -585,8 +585,8 @@
             <div class="mv-subnav-bar">
                 <div class="mv-subnav-pills" id="mvSubnavPills">
                     <button class="mv-subnav-btn active" data-view="vault">Semantic Memory Vault</button>
-                    <button class="mv-subnav-btn" data-view="recent">Recent Conversation (5 msgs)</button>
-                    <button class="mv-subnav-btn" data-view="derived">Derived / Compressed Memory</button>
+                    <button class="mv-subnav-btn" data-view="recent">Hot Context (5 turns)</button>
+                    <button class="mv-subnav-btn" data-view="derived">Cold Memory</button>
                     <button class="mv-subnav-btn" data-view="activity">Operational Activity Log</button>
                 </div>
             </div>
@@ -600,10 +600,10 @@
                         <div class="mv-tier-title-group">
                             <div class="mv-tier-badge hot">
                                 <span class="mv-pulse-dot"></span>
-                                <span>HOT MEMORY</span>
+                                <span>COLD MEMORY</span>
                             </div>
-                            <h3 class="mv-tier-title">Session Scratchpad</h3>
-                            <span class="mv-tier-desc">Real-time working context for current session. Scoped to current chat.</span>
+                            <h3 class="mv-tier-title">Chat Episodes</h3>
+                            <span class="mv-tier-desc">Compressed older context scoped only to the current chat.</span>
                         </div>
                         <div class="mv-tier-count-pill" title="Active session items">
                             <span class="mv-count-number" id="mvHotCount">0</span>
@@ -614,20 +614,20 @@
                     <!-- Dedicated Hot Memory Input Card -->
                     <div class="mv-dedicated-input-card hot-input-card">
                         <div class="mv-dic-header">
-                            <span class="mv-dic-label">Add Session Context</span>
+                            <span class="mv-dic-label">Add Chat Memory</span>
                             <select id="mvHotCategory" class="mv-dic-select" title="Category">
-                                <option value="task" selected>Task</option>
+                                <option value="project" selected>Project</option>
                                 <option value="decision">Decision</option>
-                                <option value="summary">Summary</option>
-                                <option value="technical">Technical</option>
+                                <option value="fact">Fact</option>
+                                <option value="instruction">Instruction</option>
                             </select>
                         </div>
-                        <textarea id="mvHotInput" class="mv-dic-textarea" placeholder="Add session memory (e.g. Working on user authentication; debugging latency in vision tool...)" rows="2"></textarea>
+                        <textarea id="mvHotInput" class="mv-dic-textarea" placeholder="Add an older chat-specific episode or project detail..." rows="2"></textarea>
                         <div class="mv-dic-actions">
                             <span class="mv-dic-hint">Press Enter to save, Shift+Enter for new line</span>
                             <button id="mvHotAddBtn" class="mv-dic-submit-btn hot-submit" title="Add entry to session memory">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                <span>Add to Hot Memory</span>
+                                <span>Add to Chat Memory</span>
                             </button>
                         </div>
                     </div>
@@ -644,10 +644,10 @@
                         <div class="mv-tier-title-group">
                             <div class="mv-tier-badge cold">
                                 <span class="mv-pulse-dot"></span>
-                                <span>COLD MEMORY</span>
+                                <span>GLOBAL MEMORY</span>
                             </div>
-                            <h3 class="mv-tier-title">Persistent Knowledge Base</h3>
-                            <span class="mv-tier-desc">Durable cross-session memory. Persistent user-level semantic memory.</span>
+                            <h3 class="mv-tier-title">Personal Information</h3>
+                            <span class="mv-tier-desc">Stable personal details shared across chats.</span>
                         </div>
                         <div class="mv-tier-count-pill" title="Persistent vault items">
                             <span class="mv-count-number" id="mvColdCount">0</span>
@@ -658,23 +658,26 @@
                     <!-- Dedicated Cold Memory Input Card -->
                     <div class="mv-dedicated-input-card cold-input-card">
                         <div class="mv-dic-header">
-                            <span class="mv-dic-label">Add Persistent Knowledge</span>
+                            <span class="mv-dic-label">Add Personal Information</span>
                             <select id="mvColdCategory" class="mv-dic-select" title="Category">
-                                <option value="preference" selected>Preference</option>
-                                <option value="personal">Personal</option>
-                                <option value="project">Project</option>
-                                <option value="technical">Technical</option>
-                                <option value="decision">Decision</option>
+                                <option value="personal" selected>Personal info</option>
                             </select>
                         </div>
-                        <textarea id="mvColdInput" class="mv-dic-textarea" placeholder="Add persistent memory (e.g. Prefers FastAPI backend; always write code with Type Hints...)" rows="2"></textarea>
+                        <textarea id="mvColdInput" class="mv-dic-textarea" placeholder="Add stable personal information (e.g. My name is Rakshit Jain.)" rows="2"></textarea>
                         <div class="mv-dic-actions">
                             <span class="mv-dic-hint">Persists permanently across sessions &amp; reboots</span>
                             <button id="mvColdAddBtn" class="mv-dic-submit-btn cold-submit" title="Add entry to persistent memory">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                <span>Add to Cold Memory</span>
+                                <span>Add to Global Memory</span>
                             </button>
                         </div>
+                    </div>
+
+                    <div class="mv-bulk-toolbar" id="mvGlobalBulkToolbar">
+                        <label class="mv-select-all"><input id="mvGlobalSelectAll" type="checkbox"> <span>Select visible</span></label>
+                        <span class="mv-bulk-count" id="mvGlobalSelectedCount">0 selected</span>
+                        <button class="mv-bulk-btn" id="mvGlobalDeleteSelectedBtn" type="button" disabled>Delete selected</button>
+                        <button class="mv-bulk-btn danger" id="mvGlobalDeleteAllBtn" type="button">Delete all visible</button>
                     </div>
 
                     <!-- Cold Memory Cards Stream -->
@@ -712,10 +715,10 @@
                     <div class="mv-section-title-wrap">
                         <div class="mv-tier-badge derived">
                             <span class="mv-pulse-dot"></span>
-                            <span>COMPRESSED MEMORY</span>
+                            <span>CHAT-SCOPED COLD MEMORY</span>
                         </div>
-                        <h3 class="mv-section-title">Derived &amp; Compacted Summaries</h3>
-                        <p class="mv-section-desc">Summarized knowledge representations derived from earlier conversation turns or compacted hot memories.</p>
+                        <h3 class="mv-section-title">Cold Memory</h3>
+                        <p class="mv-section-desc">Compressed records from this chat after a completed turn leaves the five-turn Hot window. Categories may include summaries, decisions, preferences, instructions, and task context.</p>
                     </div>
                     <div class="mv-tier-count-pill">
                         <span class="mv-count-number" id="mvDerivedCount">0</span>
@@ -743,6 +746,12 @@
                         <span class="mv-count-text">Events</span>
                     </div>
                 </div>
+                <div class="mv-bulk-toolbar mv-activity-bulk-toolbar" id="mvActivityBulkToolbar">
+                    <label class="mv-select-all"><input id="mvActivitySelectAll" type="checkbox"> <span>Select visible</span></label>
+                    <span class="mv-bulk-count" id="mvActivitySelectedCount">0 selected</span>
+                    <button class="mv-bulk-btn" id="mvActivityDeleteSelectedBtn" type="button" disabled>Delete selected</button>
+                    <button class="mv-bulk-btn danger" id="mvActivityDeleteAllBtn" type="button">Delete all visible</button>
+                </div>
                 <div class="mv-activity-stream" id="mvActivityStream">
                     <!-- Populated from /api/memory/activity -->
                 </div>
@@ -762,6 +771,9 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 <span>Air-Gapped · Zero Leak</span>
             </button>
+            <button class="observer-launch-btn" id="observerLaunchBtn" title="Open live SAGE Observer">
+                <span class="observer-live-dot"></span><span>Observer</span><b id="observerEventCount">0</b>
+            </button>
             <button class="icon-btn" id="closeRightBtn" title="Collapse">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
@@ -771,13 +783,16 @@
         <div class="panel-scroll" id="panelScroll">
             <div class="panel-sec exec-panel-sec">
                 <div class="panel-sec-head">
-                    <div class="panel-section-title">Agent Panel</div>
+                    <div class="panel-section-title">Live progress</div>
                     <div class="exec-badge" id="execBadge">
                         <span class="exec-dot" id="execStatusDot"></span>
                         <span id="execStatusText">Idle</span>
                     </div>
                 </div>
-                <div class="panel-lbl">EXECUTION TILES</div>
+                <div class="exec-flow-guide" aria-label="Steps run from top to bottom">
+                    <span class="exec-flow-arrow">1 <i></i> 2 <i></i> 3</span>
+                    <span>Runs from top to bottom</span>
+                </div>
 
                 <!-- Execution tiles stream wrapper with top/bottom blur masks -->
                 <div class="exec-stream-wrapper" id="execStreamWrapper">
@@ -788,8 +803,8 @@
                             <div class="ees-icon">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                             </div>
-                            <div class="ees-title">No current activity</div>
-                            <div class="ees-desc">start a new chat with sage to begin .</div>
+                            <div class="ees-title">Ready when you are</div>
+                            <div class="ees-desc">Send a message to see SAGE's progress here.</div>
                         </div>
                     </div>
                     <div class="edge-blur-bottom" id="edgeBlurBottom"></div>
@@ -887,9 +902,21 @@
                 <div class="flash-section-heading">
                     <span class="flash-step">02</span>
                     <div>
-                        <h3>Local SAGE memory</h3>
-                        <p>Flash no longer runs a 2B compressor on CPU or a remote GPU. Chat history and durable facts use the local SQLite ledger only (<code>temp/sage_memory.db</code>).</p>
+                        <h3>2B memory curator</h3>
+                        <p>Runs after the visible answer: durable Global facts are extracted immediately, while turns leaving the five-turn window are compressed into chat-scoped Cold memory.</p>
                     </div>
+                </div>
+                <div class="flash-choice-grid" id="flashMemoryChoices">
+                    <label class="flash-choice active"><input type="radio" name="flashMemoryProvider" value="local_cpu" checked><strong>Local CPU</strong><span>Recommended. Zero GPU layers and no chat latency.</span></label>
+                    <label class="flash-choice"><input type="radio" name="flashMemoryProvider" value="remote"><strong>Remote endpoint</strong><span>Use a separate private/Kaggle memory server.</span></label>
+                    <label class="flash-choice"><input type="radio" name="flashMemoryProvider" value="disabled"><strong>Disabled</strong><span>Keep raw chat only; do not curate evicted turns.</span></label>
+                </div>
+                <div class="flash-connection-fields" id="flashMemoryRemoteFields" hidden>
+                    <label><span>Memory server URL</span><input id="flashMemoryUrl" type="url" placeholder="https://memory-tunnel.example.com" autocomplete="off" spellcheck="false"></label>
+                    <label><span>API key <em>optional for trusted local URLs</em></span><input id="flashMemoryKey" type="password" placeholder="Bearer key" autocomplete="new-password"></label>
+                </div>
+                <div class="flash-model-id-grid">
+                    <label><span>Memory server model ID</span><input id="flashMemoryModelId" value="memory" autocomplete="off"></label>
                 </div>
             </section>
 
@@ -899,8 +926,8 @@
                     <div><h3>Catalog deployment</h3><p>Optional. Ask a compatible SAGE bridge to fetch the fixed repo/quant entries in <code>flash_models.json</code>.</p></div>
                 </div>
                 <div class="flash-deploy-row">
-                    <select id="flashDeployRole"><option value="gemma">Gemma</option><option value="qwen">Qwen</option></select>
-                    <select id="flashDeployTarget"><option value="primary">Primary endpoint</option></select>
+                    <select id="flashDeployRole"><option value="gemma">Gemma</option><option value="qwen">Qwen</option><option value="memory">Memory 2B</option></select>
+                    <select id="flashDeployTarget"><option value="primary">Primary endpoint</option><option value="memory">Memory endpoint</option></select>
                     <select id="flashDeployGpu"><option value="0">GPU #0</option><option value="1">GPU #1</option></select>
                     <button id="flashDeployBtn" type="button">Deploy model</button>
                 </div>
@@ -923,6 +950,40 @@
                 <button class="flash-primary-btn" id="flashApplyBtn" type="button">Apply for this session</button>
             </div>
         </footer>
+    </div>
+</div>
+
+<!-- Live Observer: compact summary plus expandable full execution inspector -->
+<div class="observer-popover" id="observerPopover" hidden>
+    <div class="observer-popover-head"><strong>Live Observer</strong><button id="observerExpandBtn" type="button">Expand</button></div>
+    <div class="observer-popover-status" id="observerPopoverStatus">Waiting for a run…</div>
+    <div class="observer-mini-events" id="observerMiniEvents"></div>
+</div>
+<div class="observer-modal" id="observerModal" hidden aria-hidden="true" role="dialog" aria-labelledby="observerTitle">
+    <div class="observer-modal-backdrop" id="observerModalBackdrop"></div>
+    <div class="observer-dialog">
+        <header class="observer-header">
+            <div><span class="observer-kicker">SAGE OBSERVER</span><h2 id="observerTitle">Execution inspector</h2><p id="observerRunLabel">No active run</p></div>
+            <div class="observer-header-actions"><button id="observerExportBtn" type="button">Export JSON</button><button id="observerCloseBtn" type="button" aria-label="Close">&times;</button></div>
+        </header>
+        <div class="observer-workspace">
+            <aside class="observer-timeline" id="observerTimeline"></aside>
+            <section class="observer-detail">
+                <div class="observer-detail-empty" id="observerDetailEmpty">Select an event to inspect its sanitized input, output, routing, timing, and memory data.</div>
+                <div class="observer-detail-content" id="observerDetailContent" hidden>
+                    <div class="observer-detail-heading">
+                        <div><span class="observer-detail-step" id="observerDetailStep">Event</span><h3 id="observerDetailTitle">Execution event</h3></div>
+                        <div class="observer-detail-meta" id="observerDetailMeta"></div>
+                    </div>
+                    <p class="observer-detail-summary" id="observerDetailSummary"></p>
+                    <div class="observer-io-grid" id="observerDetailSections"></div>
+                    <details class="observer-raw-details">
+                        <summary>Raw sanitized event</summary>
+                        <pre id="observerDetailJson"></pre>
+                    </details>
+                </div>
+            </section>
+        </div>
     </div>
 </div>
 

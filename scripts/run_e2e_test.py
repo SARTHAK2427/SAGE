@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 # Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
 from orchestrator import orchestrator
@@ -12,7 +12,7 @@ from model_manager import model_manager
 def main():
     docx_path = os.path.join(config.TEMP_DIR, "test_sample_report.docx")
     if not os.path.exists(docx_path):
-        print(f"Error: {docx_path} does not exist. Run generate_test_docx.py first.")
+        print(f"Error: {docx_path} does not exist. Run python -m scripts.generate_test_docx first.")
         sys.exit(1)
 
     from db_service import document_db

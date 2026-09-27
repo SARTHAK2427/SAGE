@@ -54,6 +54,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const edgeBlurTop     = document.getElementById('edgeBlurTop');
     const edgeBlurBottom  = document.getElementById('edgeBlurBottom');
 
+    // Live Observer
+    const observerLaunchBtn = document.getElementById('observerLaunchBtn');
+    const observerEventCount = document.getElementById('observerEventCount');
+    const observerPopover = document.getElementById('observerPopover');
+    const observerPopoverStatus = document.getElementById('observerPopoverStatus');
+    const observerMiniEvents = document.getElementById('observerMiniEvents');
+    const observerExpandBtn = document.getElementById('observerExpandBtn');
+    const observerModal = document.getElementById('observerModal');
+    const observerModalBackdrop = document.getElementById('observerModalBackdrop');
+    const observerCloseBtn = document.getElementById('observerCloseBtn');
+    const observerExportBtn = document.getElementById('observerExportBtn');
+    const observerRunLabel = document.getElementById('observerRunLabel');
+    const observerTimeline = document.getElementById('observerTimeline');
+    const observerDetailEmpty = document.getElementById('observerDetailEmpty');
+    const observerDetailContent = document.getElementById('observerDetailContent');
+    const observerDetailStep = document.getElementById('observerDetailStep');
+    const observerDetailTitle = document.getElementById('observerDetailTitle');
+    const observerDetailMeta = document.getElementById('observerDetailMeta');
+    const observerDetailSummary = document.getElementById('observerDetailSummary');
+    const observerDetailSections = document.getElementById('observerDetailSections');
+    const observerDetailJson = document.getElementById('observerDetailJson');
+
     // In-site Document Preview Modal elements
     const docPreviewModal = document.getElementById('docPreviewModal');
     const dpmBackdrop     = document.getElementById('dpmBackdrop');
@@ -78,6 +100,251 @@ document.addEventListener('DOMContentLoaded', () => {
     let chatActive    = false;  // has the input moved to the bottom yet?
     let activeChatMode = 'flash';
     let flashSessionId = (crypto.randomUUID?.() || ('flash_' + Date.now()));
+    let observerSource = null;
+    let observerRunId = null;
+    let observerEvents = [];
+    let observerSelectedSequence = null;
+    let observerSelectionPinned = false;
+    const observerTiles = new Map();
+
+    function observerProgressSpec(event) {
+        const actor = String(event.actor || '').toLowerCase();
+        const phase = String(event.phase || '').toLowerCase();
+        if (actor === 'sage' && phase === 'request') {
+            return { key: 'request', label: 'SAGE', actorClass: 'gemma', action: event.status === 'completed' ? 'Response ready' : 'Understanding your request', detail: event.status === 'completed' ? 'The answer has been prepared.' : 'Preparing the conversation and attachments.' };
+        }
+        if (actor === 'memory' && phase === 'recent_context') {
+            return { key: 'recent-context', label: 'Conversation', actorClass: 'knowledge', action: 'Checking recent context', detail: 'Using the most relevant recent messages.' };
+        }
+        if (actor === 'gemma' && ['model_input', 'model_output'].includes(phase)) {
+            return { key: 'routing', label: 'SAGE', actorClass: 'gemma', action: 'Choosing the best response path', detail: event.status === 'completed' ? 'The response approach is ready.' : 'Deciding whether vision or memory is needed.' };
+        }
+        if (actor === 'memory' && phase === 'semantic_search') {
+            return { key: 'memory-search', label: 'Memory', actorClass: 'knowledge', action: 'Looking through relevant memory', detail: event.status === 'completed' ? 'Relevant past context has been checked.' : 'Searching only when earlier context may help.' };
+        }
+        if (actor === 'qwen' && ['model_input', 'model_output'].includes(phase)) {
+            return { key: 'vision', label: 'Vision', actorClass: 'vision', action: 'Reading the attached image', detail: event.status === 'completed' ? 'Visual details have been extracted.' : 'Inspecting the image for grounded details.' };
+        }
+        if (actor === 'gemma' && ['synthesis_input', 'synthesis_output'].includes(phase)) {
+            return { key: 'synthesis', label: 'SAGE', actorClass: 'gemma', action: 'Putting the answer together', detail: event.status === 'completed' ? 'The findings have been combined.' : 'Combining the request with the gathered evidence.' };
+        }
+        if (actor === 'postgres' && phase === 'conversation_commit') {
+            return { key: 'save-chat', label: 'Conversation', actorClass: 'knowledge', action: 'Saving this conversation', detail: event.status === 'failed' ? 'The chat remains available, but memory could not be saved.' : 'This exchange is now available to recent context.' };
+        }
+        if (actor === 'memory-2b' && ['curation_queue', 'curation'].includes(phase)) {
+            return { key: `memory-curation:${event.payload?.job_type || event.payload?.job_id || 'current'}`, label: 'Memory', actorClass: 'knowledge', action: 'Updating memory in the background', detail: event.status === 'failed' ? 'Memory processing needs attention. Open Observer for details.' : event.status === 'completed' ? 'Useful details were organized for later recall.' : 'Organizing useful details without delaying your answer.' };
+        }
+        return null;
+    }
+
+    function mirrorObserverEventToPanel(event) {
+        const spec = observerProgressSpec(event);
+        if (!spec) return;
+        const location = event.payload?.provider === 'remote' ? 'Remote' : 'On this device';
+        const duration = event.duration_ms != null ? `${(Number(event.duration_ms) / 1000).toFixed(1)}s` : undefined;
+        if (['started', 'queued', 'running'].includes(event.status)) {
+            if (!observerTiles.has(spec.key)) {
+                observerTiles.set(spec.key, spawnExecTile({
+                    id: `obs_${event.sequence}`, actor: spec.label, actorClass: spec.actorClass,
+                    action: spec.action, detail: spec.detail, status: 'running', location,
+                    observerSequence: event.sequence
+                }));
+            } else {
+                observerTiles.get(spec.key).dataset.observerSequence = String(event.sequence);
+            }
+            if (spec.key.startsWith('memory-curation') && !isRunning) rightPanelDone();
+            return;
+        }
+        const existing = observerTiles.get(spec.key);
+        if (existing) {
+            existing.dataset.observerSequence = String(event.sequence);
+            completeExecTile(existing, spec.detail, duration, event.status);
+            observerTiles.delete(spec.key);
+        } else {
+            spawnExecTile({
+                id: `obs_${event.sequence}`, actor: spec.label, actorClass: spec.actorClass,
+                action: spec.action, detail: spec.detail,
+                status: event.status === 'failed' ? 'failed' : 'done', duration, location,
+                observerSequence: event.sequence
+            });
+        }
+        if (spec.key.startsWith('memory-curation') && !isRunning) rightPanelDone();
+    }
+
+    function observerEventTitle(event) {
+        return String(event.phase || 'event').replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+    }
+
+    function observerValue(value) {
+        return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    }
+
+    function appendObserverSection(title, value, tone = '') {
+        if (!observerDetailSections || value === undefined || value === null || value === '') return;
+        const section = document.createElement('section');
+        section.className = `observer-io-card ${tone}`.trim();
+        const heading = document.createElement('h4');
+        heading.textContent = title;
+        const pre = document.createElement('pre');
+        pre.textContent = observerValue(value);
+        section.append(heading, pre);
+        observerDetailSections.appendChild(section);
+    }
+
+    function renderObserverDetails(event) {
+        const payload = event.payload || {};
+        if (observerDetailStep) observerDetailStep.textContent = `Event #${event.sequence}`;
+        if (observerDetailTitle) observerDetailTitle.textContent = observerEventTitle(event);
+        if (observerDetailSummary) observerDetailSummary.textContent = event.summary || '';
+        if (observerDetailMeta) {
+            const time = new Date(Number(event.timestamp || 0) * 1000).toLocaleTimeString();
+            const duration = event.duration_ms != null ? ` · ${Number(event.duration_ms).toFixed(1)} ms` : '';
+            observerDetailMeta.textContent = `${event.actor} · ${event.status} · ${time}${duration}`;
+        }
+        if (observerDetailSections) {
+            observerDetailSections.innerHTML = '';
+            const input = {};
+            const output = {};
+            const inputKeys = ['objective', 'messages', 'instruction', 'query', 'context', 'attachments', 'image_count', 'source_message_ids', 'input_chars', 'chunk_count', 'chunk_index'];
+            const outputKeys = ['answer', 'route', 'flash_case', 'memories', 'candidate_ids', 'memory_ids', 'proposed', 'stored', 'memory_jobs'];
+            inputKeys.forEach(key => { if (payload[key] !== undefined) input[key] = payload[key]; });
+            outputKeys.forEach(key => { if (payload[key] !== undefined) output[key] = payload[key]; });
+            if (payload.content !== undefined) {
+                if (String(event.phase || '').includes('input')) input.content = payload.content;
+                else output.content = payload.content;
+            }
+            const consumed = new Set([...inputKeys, ...outputKeys, 'content']);
+            const metadata = Object.fromEntries(Object.entries(payload).filter(([key]) => !consumed.has(key)));
+            appendObserverSection('Input', Object.keys(input).length ? input : null, 'input');
+            appendObserverSection('Output', Object.keys(output).length ? output : null, 'output');
+            appendObserverSection('Routing, timing & metadata', Object.keys(metadata).length ? metadata : null, 'metadata');
+            if (!observerDetailSections.children.length) appendObserverSection('Event data', payload, 'metadata');
+        }
+        if (observerDetailJson) observerDetailJson.textContent = JSON.stringify(event, null, 2);
+    }
+
+    function inspectObserverEvent(event, button, { pin = true } = {}) {
+        observerSelectedSequence = Number(event.sequence);
+        if (pin) observerSelectionPinned = true;
+        observerTimeline?.querySelectorAll('.observer-event').forEach(item => item.classList.remove('active'));
+        const target = button || observerTimeline?.querySelector(`[data-sequence="${observerSelectedSequence}"]`);
+        target?.classList.add('active');
+        if (observerDetailEmpty) observerDetailEmpty.hidden = true;
+        if (observerDetailContent) observerDetailContent.hidden = false;
+        renderObserverDetails(event);
+    }
+
+    function renderObserver() {
+        if (observerEventCount) observerEventCount.textContent = String(observerEvents.length);
+        const last = observerEvents[observerEvents.length - 1];
+        if (observerPopoverStatus) observerPopoverStatus.textContent = last ? `${last.actor}: ${last.summary}` : 'Waiting for a run…';
+        if (observerRunLabel) observerRunLabel.textContent = observerRunId ? `Run ${observerRunId} · ${observerEvents.length} events` : 'No active run';
+        if (observerMiniEvents) {
+            observerMiniEvents.innerHTML = '';
+            observerEvents.slice(-7).reverse().forEach(event => {
+                const row = document.createElement('div');
+                row.className = `observer-mini-event ${event.status}`;
+                row.innerHTML = `<i></i><span><strong>${esc(event.actor)} · ${esc(event.phase)}</strong><br>${esc(event.summary)}</span><small>#${event.sequence}</small>`;
+                observerMiniEvents.appendChild(row);
+            });
+        }
+        if (observerTimeline) {
+            observerTimeline.innerHTML = '';
+            observerEvents.forEach(event => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'observer-event';
+                button.dataset.sequence = String(event.sequence);
+                if (Number(event.sequence) === observerSelectedSequence) button.classList.add('active');
+                const time = new Date(Number(event.timestamp || 0) * 1000).toLocaleTimeString();
+                button.innerHTML = `<span class="observer-event-seq">#${event.sequence}</span><span><strong>${esc(event.actor)} · ${esc(event.phase)}</strong><span>${esc(event.summary)}</span></span><time>${esc(time)}</time>`;
+                observerTimeline.appendChild(button);
+            });
+            if (!observerSelectionPinned) observerTimeline.scrollTop = observerTimeline.scrollHeight;
+        }
+        const selected = observerEvents.find(event => Number(event.sequence) === observerSelectedSequence);
+        if (selected) renderObserverDetails(selected);
+        else if (!observerSelectionPinned && observerEvents.length && observerModal && !observerModal.hidden) {
+            inspectObserverEvent(observerEvents[observerEvents.length - 1], null, { pin: false });
+        }
+    }
+
+    observerTimeline?.addEventListener('click', event => {
+        const button = event.target.closest('.observer-event');
+        if (!button || !observerTimeline.contains(button)) return;
+        const selected = observerEvents.find(item => Number(item.sequence) === Number(button.dataset.sequence));
+        if (selected) inspectObserverEvent(selected, button);
+    });
+
+    async function hydrateObserverSnapshot() {
+        if (!observerRunId) return;
+        try {
+            const response = await fetch(`/api/observer/runs/${encodeURIComponent(observerRunId)}`);
+            if (!response.ok) return;
+            const data = await response.json();
+            (data.events || []).forEach(event => {
+                if (!observerEvents.some(item => item.sequence === event.sequence)) {
+                    observerEvents.push(event);
+                    mirrorObserverEventToPanel(event);
+                }
+            });
+            observerEvents.sort((a, b) => Number(a.sequence) - Number(b.sequence));
+            renderObserver();
+        } catch (error) {
+            console.warn('[Observer] Snapshot unavailable', error);
+        }
+    }
+
+    function startObserver(runId) {
+        if (!runId) return;
+        observerSource?.close();
+        observerRunId = runId;
+        observerEvents = [];
+        observerSelectedSequence = null;
+        observerSelectionPinned = false;
+        observerTiles.clear();
+        if (observerDetailEmpty) observerDetailEmpty.hidden = false;
+        if (observerDetailContent) observerDetailContent.hidden = true;
+        renderObserver();
+        observerLaunchBtn?.classList.add('live');
+        observerSource = new EventSource(`/api/observer/stream/${encodeURIComponent(runId)}`);
+        observerSource.addEventListener('observation', event => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (!observerEvents.some(item => item.sequence === payload.sequence)) {
+                    observerEvents.push(payload);
+                    mirrorObserverEventToPanel(payload);
+                }
+                renderObserver();
+            } catch (error) { console.warn('[Observer] Invalid event', error); }
+        });
+        observerSource.onerror = () => {
+            if (observerPopoverStatus) observerPopoverStatus.textContent = 'Live stream reconnecting…';
+        };
+    }
+
+    function setObserverModal(open) {
+        if (!observerModal) return;
+        observerModal.hidden = !open;
+        observerModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+        if (open) {
+            observerPopover.hidden = true;
+            hydrateObserverSnapshot();
+            renderObserver();
+        }
+    }
+
+    observerLaunchBtn?.addEventListener('click', event => { event.stopPropagation(); observerPopover.hidden = !observerPopover.hidden; });
+    observerExpandBtn?.addEventListener('click', () => setObserverModal(true));
+    observerCloseBtn?.addEventListener('click', () => setObserverModal(false));
+    observerModalBackdrop?.addEventListener('click', () => setObserverModal(false));
+    observerExportBtn?.addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify({ run_id: observerRunId, events: observerEvents }, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = `sage-observer-${observerRunId || 'run'}.json`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    if (window.location.hash === '#observer') setObserverModal(true);
 
     // ══════════════════════════════════════════════════
     // STATUS POLL (Sync backend model configs & health)
@@ -340,7 +607,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function useSuggestedFlashModelIds(roles) {
         const fields = {
             gemma: document.getElementById('flashGemmaModelId'),
-            qwen: document.getElementById('flashQwenModelId')
+            qwen: document.getElementById('flashQwenModelId'),
+            memory: document.getElementById('flashMemoryModelId')
         };
         const changed = [];
         (roles || []).forEach(role => {
@@ -356,20 +624,32 @@ document.addEventListener('DOMContentLoaded', () => {
         return document.querySelector('input[name="flashPrimaryProvider"]:checked')?.value || 'local_gpu';
     }
 
+    function memoryProvider() {
+        return document.querySelector('input[name="flashMemoryProvider"]:checked')?.value || 'local_cpu';
+    }
+
     function syncFlashRuntimeFields() {
         const remote = primaryProvider() === 'remote';
+        const memoryRemote = memoryProvider() === 'remote';
         if (flashPrimaryRemoteFields) flashPrimaryRemoteFields.hidden = !remote;
+        const memoryFields = document.getElementById('flashMemoryRemoteFields');
+        if (memoryFields) memoryFields.hidden = !memoryRemote;
         document.querySelectorAll('#flashPrimaryChoices .flash-choice').forEach(choice => {
+            choice.classList.toggle('active', !!choice.querySelector('input:checked'));
+        });
+        document.querySelectorAll('#flashMemoryChoices .flash-choice').forEach(choice => {
             choice.classList.toggle('active', !!choice.querySelector('input:checked'));
         });
         const deployTarget = document.getElementById('flashDeployTarget');
         const primaryOption = deployTarget?.querySelector('option[value="primary"]');
+        const memoryOption = deployTarget?.querySelector('option[value="memory"]');
         if (primaryOption) primaryOption.disabled = !remote;
+        if (memoryOption) memoryOption.disabled = !memoryRemote;
         if (deployTarget && deployTarget.selectedOptions[0]?.disabled) {
-            deployTarget.value = 'primary';
+            deployTarget.value = remote ? 'primary' : (memoryRemote ? 'memory' : 'primary');
         }
         if (flashDeployBtn) {
-            flashDeployBtn.disabled = !remote;
+            flashDeployBtn.disabled = !remote && !memoryRemote;
             flashDeployBtn.title = flashDeployBtn.disabled ? 'Choose a remote endpoint to deploy through its bridge.' : '';
         }
     }
@@ -404,13 +684,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const roles = {
             gemma: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashGemmaModelId')?.value.trim() || 'gemma' },
             qwen: { provider: primary, connection_id: primary === 'remote' ? 'primary' : null, model_id: document.getElementById('flashQwenModelId')?.value.trim() || 'qwen' },
-            memory: { provider: 'disabled', connection_id: null, model_id: 'memory' }
+            memory: { provider: memoryProvider(), connection_id: memoryProvider() === 'remote' ? 'memory' : null, model_id: document.getElementById('flashMemoryModelId')?.value.trim() || 'memory' }
         };
 
         if (primary === 'remote') {
             const baseUrl = document.getElementById('flashPrimaryUrl')?.value.trim();
             if (!baseUrl) throw new Error('Enter the primary remote server URL.');
             connections.push({ id: 'primary', label: 'Primary inference server', base_url: baseUrl, api_key: document.getElementById('flashPrimaryKey')?.value || '' });
+        }
+        if (memoryProvider() === 'remote') {
+            const baseUrl = document.getElementById('flashMemoryUrl')?.value.trim();
+            if (!baseUrl) throw new Error('Enter the remote memory server URL.');
+            connections.push({ id: 'memory', label: 'Memory curator server', base_url: baseUrl, api_key: document.getElementById('flashMemoryKey')?.value || '' });
         }
         return { connections, roles };
     }
@@ -465,6 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
     flashRuntimeBackdrop?.addEventListener('click', () => setFlashModal(false));
     if (window.location.hash === '#flash-runtime') setFlashModal(true);
     document.querySelectorAll('input[name="flashPrimaryProvider"]').forEach(input => input.addEventListener('change', syncFlashRuntimeFields));
+    document.querySelectorAll('input[name="flashMemoryProvider"]').forEach(input => input.addEventListener('change', syncFlashRuntimeFields));
     syncFlashRuntimeFields();
 
     async function refreshRuntimeReadiness() {
@@ -1173,6 +1459,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    if (window.location.pathname === '/memory' || window.location.hash === '#memory') {
+        document.querySelector('.tab-btn[data-tab="memory"]')?.click();
+    }
 
     // ══════════════════════════════════════════════════
     // TOOLS & MODELS CONTROLLER (Frontend-First Prototype)
@@ -2621,6 +2911,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ══════════════════════════════════════════════════
     let activeTimers = [];
     let currentAbortController = null;
+    let execStepCounter = 0;
 
     function clearExecTimers() {
         activeTimers.forEach(id => clearTimeout(id));
@@ -2700,21 +2991,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     execTilesTrack?.addEventListener('scroll', updateTileBlurs);
 
-    // Spawn a new tile ABOVE previous tiles (prepending shifts older tiles down)
-    function spawnExecTile({ id, actor, actorClass, action, detail, status = 'running', duration, location = 'LOCAL' }) {
+    // Progress is chronological: the first step stays at the top and new work is appended below it.
+    function spawnExecTile({ id, actor, actorClass, action, detail, status = 'running', duration, location = 'On this device', observerSequence }) {
         if (execEmptyState) execEmptyState.style.display = 'none';
 
         const tile = document.createElement('div');
         tile.className = 'exec-tile';
         tile.dataset.id = id || ('tile_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4));
         tile.dataset.status = status;
+        tile.dataset.step = String(++execStepCounter);
+        if (observerSequence != null) tile.dataset.observerSequence = String(observerSequence);
+        tile.tabIndex = 0;
+        tile.setAttribute('role', 'button');
+        tile.setAttribute('aria-label', `Step ${execStepCounter}: ${action || 'Processing'}. Open technical details.`);
 
         const isDone = status === 'done';
+        const isFailed = status === 'failed';
+        const isTerminal = isDone || isFailed;
         tile.innerHTML = `
             <div class="et-head">
-                <span class="et-actor-badge ${actorClass || 'gemma'}">${esc(actor || 'Gemma 4B')}</span>
-                <span class="et-status ${isDone ? 'done' : 'running'}">
-                    ${isDone ? 'Done' : '<span class="et-spinner"></span> Running'}
+                <span class="et-step-number">${execStepCounter}</span>
+                <span class="et-actor-badge ${actorClass || 'gemma'}">${esc(actor || 'SAGE')}</span>
+                <span class="et-status ${isFailed ? 'failed' : isDone ? 'done' : 'running'}">
+                    ${isFailed ? 'Needs attention' : isDone ? 'Done' : '<span class="et-spinner"></span> Working'}
                 </span>
             </div>
             <div class="et-body">
@@ -2722,15 +3021,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="et-detail">${esc(detail || 'Working...')}</div>
             </div>
             <div class="et-foot">
-                <span class="et-time">${duration || (isDone ? '0.2s' : '0.0s')}</span>
+                <span class="et-time">${duration || (isTerminal ? '0.2s' : '0.0s')}</span>
                 <span class="et-pill">${esc(location)}</span>
             </div>
+            <span class="et-details-hint">Open technical details</span>
         `;
 
-        // Prepend so the new tile spawns above and shifts previous tiles downward
-        execTilesTrack.insertBefore(tile, execTilesTrack.firstChild);
+        execTilesTrack.appendChild(tile);
+        const openDetails = () => {
+            const sequence = Number(tile.dataset.observerSequence);
+            const event = observerEvents.find(item => Number(item.sequence) === sequence);
+            setObserverModal(true);
+            if (event) inspectObserverEvent(event, null);
+        };
+        tile.addEventListener('click', openDetails);
+        tile.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetails(); }
+        });
 
-        if (!isDone) {
+        if (!isTerminal) {
             const startTime = performance.now();
             const timeEl = tile.querySelector('.et-time');
             const timer = setInterval(() => {
@@ -2745,22 +3054,23 @@ document.addEventListener('DOMContentLoaded', () => {
             tile._startTime = startTime;
         }
 
-        execTilesTrack.scrollTop = 0;
+        execTilesTrack.scrollTop = execTilesTrack.scrollHeight;
         updateTileBlurs();
         setTimeout(updateTileBlurs, 340);
 
         return tile;
     }
 
-    function completeExecTile(tile, completionDetail, durationText) {
+    function completeExecTile(tile, completionDetail, durationText, finalStatus = 'completed') {
         if (!tile) return;
         if (tile._timer) clearInterval(tile._timer);
-        tile.dataset.status = 'done';
+        const failed = finalStatus === 'failed';
+        tile.dataset.status = failed ? 'failed' : 'done';
 
         const st = tile.querySelector('.et-status');
         if (st) {
-            st.className = 'et-status done';
-            st.textContent = 'Done';
+            st.className = `et-status ${failed ? 'failed' : 'done'}`;
+            st.textContent = failed ? 'Needs attention' : 'Done';
         }
         if (completionDetail) {
             const dt = tile.querySelector('.et-detail');
@@ -2779,6 +3089,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function clearExecTiles() {
         clearExecTimers();
+        execStepCounter = 0;
+        observerTiles.clear();
         if (execTilesTrack) {
             const tiles = execTilesTrack.querySelectorAll('.exec-tile');
             tiles.forEach(t => {
@@ -2797,8 +3109,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function rightPanelDone() {
-        if (execStatusDot) execStatusDot.className = 'exec-dot done';
-        if (execStatusText) execStatusText.textContent = 'Done';
+        const memoryWorking = [...observerTiles.keys()].some(key => key.startsWith('memory-curation'));
+        if (execStatusDot) execStatusDot.className = memoryWorking ? 'exec-dot running' : 'exec-dot done';
+        if (execStatusText) execStatusText.textContent = memoryWorking ? 'Answer ready · memory working' : 'Done';
     }
 
     function rightPanelIdle() {
@@ -2861,8 +3174,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData();
         formData.append('objective', text || 'Analyze the attached files.');
+        const requestObserverRunId = `run_${crypto.randomUUID?.() || Date.now()}`;
         if (activeChatMode === 'flash') {
             formData.append('session_id', flashSessionId);
+            formData.append('observer_run_id', requestObserverRunId);
             formData.append('temperature', String(uiSettings.temperature || '0.7'));
             formData.append('save_history', uiSettings.saveHistory ? '1' : '0');
         } else if (currentChatId) {
@@ -2892,68 +3207,11 @@ document.addEventListener('DOMContentLoaded', () => {
         expandPanel();
         rightPanelRunning();
 
-        // Gemma is the single Flash entry point and routes in the same inference.
-        let currentTile = spawnExecTile({
-            id: 'gemma_reasoning',
-            actor: 'Gemma Flash',
-            actorClass: 'gemma',
-            action: 'Reasoning & Routing',
-            detail: 'Answering directly or preparing a precise visual task for Qwen...',
-            status: 'running'
-        });
-
-        // Dynamic multi-model tile spawning:
-        // If files attached: Gemma calls Vision Model -> spawns new tile ABOVE Gemma, shifting Gemma DOWN
-        if (activeChatMode !== 'flash' && hasFiles) {
-            activeTimers.push(setTimeout(() => {
-                if (!isRunning) return;
-                completeExecTile(currentTile, 'Identified document attachments. Invoking Vision model.');
-                currentTile = spawnExecTile({
-                    id: 'vision_ocr',
-                    actor: 'Qwen3-VL',
-                    actorClass: 'vision',
-                    action: 'Vision & Document OCR',
-                    detail: `Parsing ${fileNames.slice(0, 2).join(', ')}${fileNames.length > 2 ? ' +' + (fileNames.length - 2) + ' more' : ''} — OCR extraction & visual grounding...`,
-                    status: 'running'
-                });
-
-                const lower = text.toLowerCase();
-                const wantsCode = lower.includes('code') || lower.includes('python') || lower.includes('script') || lower.includes('calc') || lower.includes('table');
-                if (wantsCode) {
-                    activeTimers.push(setTimeout(() => {
-                        if (!isRunning) return;
-                        completeExecTile(currentTile, 'Document OCR parsed. Extracted data passed to Coder.');
-                        currentTile = spawnExecTile({
-                            id: 'coder_agent',
-                            actor: 'Qwen2.5-Coder',
-                            actorClass: 'coder',
-                            action: 'Code Synthesis & Execution',
-                            detail: 'Generating Python script and executing safely inside air-gapped container...',
-                            status: 'running'
-                        });
-                    }, 800));
-                }
-            }, 600));
-        } else if (activeChatMode !== 'flash') {
-            const lower = text.toLowerCase();
-            const wantsCode = lower.includes('code') || lower.includes('python') || lower.includes('script') || lower.includes('function') || lower.includes('calc');
-            if (wantsCode) {
-                activeTimers.push(setTimeout(() => {
-                    if (!isRunning) return;
-                    completeExecTile(currentTile, 'Execution plan verified. Dispatching to Coder model.');
-                    currentTile = spawnExecTile({
-                        id: 'coder_agent',
-                        actor: 'Qwen2.5-Coder',
-                        actorClass: 'coder',
-                        action: 'Code Synthesis & Execution',
-                        detail: 'Synthesizing Python logic and testing safely in air-gapped container...',
-                        status: 'running'
-                    });
-                }, 700));
-            }
-        }
+        // Execution tiles now come only from real backend Observer events.
+        let currentTile = null;
 
         currentAbortController = new AbortController();
+        startObserver(activeChatMode === 'flash' ? requestObserverRunId : currentChatId);
 
         try {
             const res  = await fetch(activeChatMode === 'flash' ? '/api/flash' : '/api/chat', {
@@ -2988,72 +3246,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendError(data.error || 'Orchestration error.');
                 rightPanelIdle();
             } else {
-                const gemmaSeconds = Number(data.telemetry?.gemma_seconds || 0);
-                const providers = data.telemetry?.providers || {};
-                completeExecTile(
-                    currentTile,
-                    `Flash Case ${data.flash_case || 'A'} selected.`,
-                    `${gemmaSeconds.toFixed(1)}s`
-                );
-                const gemmaLocation = currentTile?.querySelector('.et-pill');
-                if (gemmaLocation) gemmaLocation.textContent = providers.gemma === 'remote' ? 'REMOTE' : 'LOCAL';
-
-                if (hasFiles) {
-                    spawnExecTile({
-                        id: 'flash_intake_' + Date.now(),
-                        actor: 'Attachment Intake',
-                        actorClass: 'tool',
-                        action: 'Direct Shared-Pool Intake',
-                        detail: 'Simple files bypassed document-database ingestion; complex documents still use the document pipeline.',
-                        status: 'done',
-                        duration: `${Number(data.telemetry?.intake_seconds || 0).toFixed(1)}s`,
-                        location: 'LOCAL'
-                    });
-                }
-
-                if (['B', 'C', 'D'].includes(data.flash_case)) {
-                    spawnExecTile({
-                        id: 'flash_qwen_' + Date.now(),
-                        actor: 'Qwen3-VL Flash',
-                        actorClass: 'vision',
-                        action: data.flash_case === 'C' ? 'Visual Evidence Extraction' : 'Direct Visual Answer',
-                        detail: hasFiles ? `Inspected ${fileNames.join(', ')} on Gemma's instruction.` : 'Completed delegated visual analysis.',
-                        status: 'done',
-                        duration: `${Number(data.telemetry?.qwen_seconds || 0).toFixed(1)}s`,
-                        location: providers.qwen === 'remote' ? 'REMOTE' : 'LOCAL'
-                    });
-                }
-
-                // If backend provided trace events, spawn any remaining distinct steps
-                if (data.trace && Array.isArray(data.trace)) {
-                    data.trace.forEach(evt => {
-                        if (evt.actor === 'coder' && !document.querySelector('.exec-tile[data-id="coder_agent"]')) {
-                            spawnExecTile({
-                                id: 'trace_coder_' + Date.now(),
-                                actor: 'Qwen2.5-Coder',
-                                actorClass: 'coder',
-                                action: 'Code Execution',
-                                detail: 'Executed tools: ' + (evt.calls?.map(c => c.tool).join(', ') || 'code analysis'),
-                                status: 'done',
-                                duration: evt.duration ? evt.duration.toFixed(1) + 's' : '0.4s'
-                            });
-                        }
-                    });
-                }
-
-                // Final synthesis tile spawned on top
-                const wallTime = data.telemetry?.request_wall_time ? data.telemetry.request_wall_time.toFixed(1) + 's' : '0.3s';
-                spawnExecTile({
-                    id: 'gemma_final',
-                    actor: 'SAGE Orchestrator',
-                    actorClass: 'tool',
-                    action: data.flash_case === 'C' ? 'Request Complete After Synthesis' : 'Request Complete',
-                    detail: 'End-to-end request complete; this tile is not a model call.',
-                    status: 'done',
-                    duration: wallTime,
-                    location: 'TOTAL'
-                });
-
                 // PROMPT RESULT IS READY -> MAKE THE CHATBOX GO DOWN NOW!
                 if (isFirstMessage) {
                     attachedFiles = [];
@@ -3194,6 +3386,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let mvActiveEditingId = null;
     let mvInitialized = false;
     let mvIsLoading = false;
+    const mvSelectedGlobalIds = new Set();
+    const mvSelectedActivityIds = new Set();
 
     function getMvTagClass(cat) {
         const c = (cat || '').toLowerCase();
@@ -3274,7 +3468,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Model runtime pill
             const modelPill = document.getElementById('mvModelStatusPill');
             if (modelPill && data.model_runtime) {
-                modelPill.title = data.model_runtime.detail || 'Model weights are not installed on this host.';
+                const jobs = data.model_runtime.jobs || {};
+                const jobSummary = ` Jobs: ${jobs.queued || 0} queued, ${jobs.scheduled || 0} scheduled, ${jobs.running || 0} running, ${jobs.completed || 0} completed, ${jobs.failed || 0} failed.`;
+                const lastError = data.model_runtime.last_error ? ` Last error: ${data.model_runtime.last_error}` : '';
+                modelPill.title = (data.model_runtime.detail || 'Memory curator runtime status.') + jobSummary + lastError;
+                const label = modelPill.querySelector('span:last-child');
+                if (label) label.textContent = data.model_runtime.label || '2B CURATOR';
+                modelPill.classList.toggle('pill-model-unavail', !data.model_runtime.available);
             }
 
             // Update badge counts if available
@@ -3294,6 +3494,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchMemories() {
         try {
             let url = '/api/memory/memories?status=active';
+            const activeMemoryChatId = currentChatId || flashSessionId;
+            if (activeMemoryChatId) {
+                url += `&chat_id=${encodeURIComponent(activeMemoryChatId)}`;
+            }
             if (mvSearchQuery && mvSearchQuery.trim()) {
                 url += `&search=${encodeURIComponent(mvSearchQuery.trim())}`;
             }
@@ -3364,14 +3568,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateMvCounters() {
-        const hotCount = mvMemories.filter(m => (m.memory_tier || m.type) === 'hot').length;
-        const coldCount = mvMemories.filter(m => (m.memory_tier || m.type) === 'cold').length;
+        const hotCount = mvMemories.filter(m => (m.scope === 'cold') || ((m.memory_tier || m.type) === 'cold' && m.source_chat_id)).length;
+        const coldCount = mvMemories.filter(m => (m.scope === 'global') || ((m.memory_tier || m.type) === 'cold' && !m.source_chat_id)).length;
         const hotCountEl = document.getElementById('mvHotCount');
         const coldCountEl = document.getElementById('mvColdCount');
         if (hotCountEl) hotCountEl.textContent = hotCount;
         if (coldCountEl) coldCountEl.textContent = coldCount;
         const derivedCountEl = document.getElementById('mvDerivedCount');
-        if (derivedCountEl) derivedCountEl.textContent = mvDerivedMemories.length;
+        if (derivedCountEl) derivedCountEl.textContent = mvMemories.filter(m => m.scope === 'cold' || ((m.memory_tier || m.type) === 'cold' && m.source_chat_id)).length;
         const recentCountEl = document.getElementById('mvRecentMsgCount');
         if (recentCountEl) recentCountEl.textContent = mvRecentMessages.length;
         const activityCountEl = document.getElementById('mvActivityCount');
@@ -3388,6 +3592,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const timeAgo = formatTimeAgo(item.updated_at || item.created_at);
         const tier = item.memory_tier || item.type || 'cold';
         const category = (item.category || 'fact').toLowerCase();
+        const isGlobal = item.scope === 'global' || ((item.memory_tier || item.type) === 'cold' && !item.source_chat_id);
+        if (isGlobal) card.classList.add('has-bulk-select');
 
         if (isEditing) {
             card.innerHTML = `
@@ -3422,9 +3628,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="mv-card-body">${esc(item.content)}</div>
                 <div class="mv-card-toolbar">
                     <button class="mv-btn" onclick="window.mvStartEdit('${esc(id)}')" title="Edit content">Edit</button>
-                    <button class="mv-btn mv-btn-delete" onclick="window.mvDelete('${esc(id)}')" title="Delete record">Delete</button>
+                    <button class="mv-btn mv-btn-delete" onclick="${isGlobal ? `window.mvHardDeleteGlobal(['${esc(id)}'])` : `window.mvDelete('${esc(id)}')`}" title="${isGlobal ? 'Permanently delete global memory' : 'Delete record'}">${isGlobal ? 'Delete permanently' : 'Delete'}</button>
                     ${promoteHtml}
                 </div>
+                ${isGlobal ? `<label class="mv-card-select" title="Select for permanent deletion"><input data-memory-id="${esc(id)}" type="checkbox" ${mvSelectedGlobalIds.has(id) ? 'checked' : ''} onchange="window.mvToggleGlobalSelection('${esc(id)}', this.checked)"></label>` : ''}
             `;
         }
         return card;
@@ -3451,16 +3658,18 @@ document.addEventListener('DOMContentLoaded', () => {
             return true;
         };
 
-        const hotItems = mvMemories.filter(m => (m.memory_tier || m.type) === 'hot' && filterFn(m));
-        const coldItems = mvMemories.filter(m => (m.memory_tier || m.type) === 'cold' && filterFn(m));
+        const hotItems = mvMemories.filter(m => ((m.scope === 'cold') || ((m.memory_tier || m.type) === 'cold' && m.source_chat_id)) && filterFn(m));
+        const coldItems = mvMemories.filter(m => ((m.scope === 'global') || ((m.memory_tier || m.type) === 'cold' && !m.source_chat_id)) && filterFn(m));
+        const visibleGlobalIds = coldItems.map(item => String(item.memory_id || item.id));
+        syncBulkToolbar('global', visibleGlobalIds);
 
         // Render Hot Items
         hotStack.innerHTML = '';
         if (hotItems.length === 0) {
             hotStack.innerHTML = `
                 <div class="mv-empty-state">
-                    <div class="mv-empty-title">No Session Memories Found</div>
-                    <div class="mv-empty-desc">Record session tasks or scratchpad context using the input above.</div>
+                    <div class="mv-empty-title">No Older Chat Memories</div>
+                    <div class="mv-empty-desc">Completed turns leaving the Hot five-turn window will be curated here.</div>
                 </div>
             `;
         } else {
@@ -3472,8 +3681,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (coldItems.length === 0) {
             coldStack.innerHTML = `
                 <div class="mv-empty-state">
-                    <div class="mv-empty-title">No Persistent Memories Found</div>
-                    <div class="mv-empty-desc">Add long-term rules, preferences, or promote session items to cold vault.</div>
+                    <div class="mv-empty-title">No Global Memories Found</div>
+                    <div class="mv-empty-desc">Stable facts and preferences classified by the curator appear here across chats.</div>
                 </div>
             `;
         } else {
@@ -3516,18 +3725,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const stack = document.getElementById('mvDerivedCardsStack');
         if (!stack) return;
         stack.innerHTML = '';
+        const coldMemories = mvMemories.filter(item => item.scope === 'cold' || ((item.memory_tier || item.type) === 'cold' && item.source_chat_id));
 
-        if (!mvDerivedMemories || mvDerivedMemories.length === 0) {
+        if (coldMemories.length === 0) {
             stack.innerHTML = `
                 <div class="mv-empty-state">
-                    <div class="mv-empty-title">No Derived Memories Found</div>
-                    <div class="mv-empty-desc">Summarized representations generated from conversation history or compacted hot memories will appear here.</div>
+                    <div class="mv-empty-title">No Cold Memories Yet</div>
+                    <div class="mv-empty-desc">Cold memory appears after a completed turn leaves this chat's five-turn Hot window.</div>
                 </div>
             `;
             return;
         }
 
-        mvDerivedMemories.forEach(item => {
+        coldMemories.forEach(item => {
             stack.appendChild(createMvCardElement(item));
         });
     }
@@ -3537,6 +3747,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!stream) return;
         stream.innerHTML = '';
 
+        const visibleActivityIds = mvActivities.map(item => String(item.activity_id || item.id));
+        syncBulkToolbar('activity', visibleActivityIds);
         if (!mvActivities || mvActivities.length === 0) {
             stream.innerHTML = `
                 <div class="mv-empty-state">
@@ -3553,6 +3765,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const action = (act.action || 'EVENT').toUpperCase();
             const badgeClass = getActBadgeClass(action);
             card.innerHTML = `
+                <label class="mv-activity-select" title="Select for permanent deletion"><input data-activity-id="${esc(String(act.activity_id || act.id))}" type="checkbox" ${mvSelectedActivityIds.has(String(act.activity_id || act.id)) ? 'checked' : ''} onchange="window.mvToggleActivitySelection('${esc(String(act.activity_id || act.id))}', this.checked)"></label>
                 <div class="mv-activity-left">
                     <span class="mv-act-badge ${badgeClass}">${esc(action)}</span>
                     <span class="mv-act-details">${esc(act.details || '')}</span>
@@ -3685,6 +3898,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    function syncBulkToolbar(kind, visibleIds) {
+        const isGlobal = kind === 'global';
+        const selected = isGlobal ? mvSelectedGlobalIds : mvSelectedActivityIds;
+        const prefix = isGlobal ? 'mvGlobal' : 'mvActivity';
+        const valid = new Set(visibleIds);
+        for (const id of [...selected]) {
+            if (!valid.has(String(id))) selected.delete(id);
+        }
+        const selectAll = document.getElementById(`${prefix}SelectAll`);
+        const count = document.getElementById(`${prefix}SelectedCount`);
+        const deleteSelected = document.getElementById(`${prefix}DeleteSelectedBtn`);
+        const deleteAll = document.getElementById(`${prefix}DeleteAllBtn`);
+        if (selectAll) {
+            selectAll.checked = visibleIds.length > 0 && visibleIds.every(id => selected.has(id));
+            selectAll.indeterminate = selected.size > 0 && !selectAll.checked;
+            selectAll.disabled = visibleIds.length === 0;
+        }
+        if (count) count.textContent = `${selected.size} selected`;
+        if (deleteSelected) deleteSelected.disabled = selected.size === 0;
+        if (deleteAll) deleteAll.disabled = visibleIds.length === 0;
+    }
+
+    window.mvToggleGlobalSelection = function(id, checked) {
+        if (checked) mvSelectedGlobalIds.add(String(id)); else mvSelectedGlobalIds.delete(String(id));
+        renderCurrentView();
+    };
+
+    window.mvToggleActivitySelection = function(id, checked) {
+        if (checked) mvSelectedActivityIds.add(String(id)); else mvSelectedActivityIds.delete(String(id));
+        renderCurrentView();
+    };
+
+    async function hardDeleteBulk(kind, ids) {
+        const uniqueIds = [...new Set(ids.map(String).filter(Boolean))];
+        if (!uniqueIds.length) return;
+        const noun = kind === 'global' ? 'Global memory record' : 'activity-log entry';
+        if (!confirm(`Permanently delete ${uniqueIds.length} ${noun}${uniqueIds.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+        const endpoint = kind === 'global' ? '/api/memory/bulk-hard-delete' : '/api/memory/activity/bulk-hard-delete';
+        const body = kind === 'global' ? { memory_ids: uniqueIds } : { activity_ids: uniqueIds };
+        try {
+            const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: 'Permanent delete failed' }));
+                throw new Error(err.detail || 'Permanent delete failed');
+            }
+            if (kind === 'global') mvSelectedGlobalIds.clear(); else mvSelectedActivityIds.clear();
+            await refreshMemoryVaultData();
+        } catch (error) {
+            console.error('[MemoryVault] bulk hard delete failed:', error);
+            alert(error.message || 'Permanent delete failed.');
+        }
+    }
+
+    window.mvHardDeleteGlobal = function(ids) { return hardDeleteBulk('global', ids); };
+
     window.sageJumpToMemory = function(targetId, targetType) {
         // 1. Switch to Memory tab in top navbar
         const memTabBtn = document.querySelector('.tab-btn[data-tab="memory"]');
@@ -3744,6 +4012,33 @@ document.addEventListener('DOMContentLoaded', () => {
             const coldInput = document.getElementById('mvColdInput');
             const coldCategory = document.getElementById('mvColdCategory');
             const coldAddBtn = document.getElementById('mvColdAddBtn');
+            const globalSelectAll = document.getElementById('mvGlobalSelectAll');
+            const globalDeleteSelectedBtn = document.getElementById('mvGlobalDeleteSelectedBtn');
+            const globalDeleteAllBtn = document.getElementById('mvGlobalDeleteAllBtn');
+            const activitySelectAll = document.getElementById('mvActivitySelectAll');
+            const activityDeleteSelectedBtn = document.getElementById('mvActivityDeleteSelectedBtn');
+            const activityDeleteAllBtn = document.getElementById('mvActivityDeleteAllBtn');
+
+            const visibleGlobalIds = () => [...document.querySelectorAll('#mvColdCardsStack input[data-memory-id]')]
+                .map(input => String(input.dataset.memoryId || ''))
+                .filter(Boolean);
+            const visibleActivityIds = () => [...document.querySelectorAll('#mvActivityStream input[data-activity-id]')]
+                .map(input => String(input.dataset.activityId || ''))
+                .filter(Boolean);
+            globalSelectAll?.addEventListener('change', () => {
+                const ids = visibleGlobalIds();
+                ids.forEach(id => globalSelectAll.checked ? mvSelectedGlobalIds.add(id) : mvSelectedGlobalIds.delete(id));
+                renderCurrentView();
+            });
+            globalDeleteSelectedBtn?.addEventListener('click', () => hardDeleteBulk('global', [...mvSelectedGlobalIds]));
+            globalDeleteAllBtn?.addEventListener('click', () => hardDeleteBulk('global', visibleGlobalIds()));
+            activitySelectAll?.addEventListener('change', () => {
+                const ids = visibleActivityIds();
+                ids.forEach(id => activitySelectAll.checked ? mvSelectedActivityIds.add(id) : mvSelectedActivityIds.delete(id));
+                renderCurrentView();
+            });
+            activityDeleteSelectedBtn?.addEventListener('click', () => hardDeleteBulk('activity', [...mvSelectedActivityIds]));
+            activityDeleteAllBtn?.addEventListener('click', () => hardDeleteBulk('activity', visibleActivityIds()));
 
             // Subnav view switching
             subnavPills?.querySelectorAll('.mv-subnav-btn').forEach(btn => {
@@ -3799,8 +4094,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     hotInput.focus();
                     return;
                 }
-                const cat = hotCategory ? hotCategory.value : 'task';
-                const chatId = currentChatId || ('session_' + flashSessionId);
+                const cat = hotCategory ? hotCategory.value : 'project';
+                const chatId = currentChatId || flashSessionId;
 
                 try {
                     const res = await fetch('/api/memory', {
@@ -3809,7 +4104,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         body: JSON.stringify({
                             content: text,
                             category: cat,
-                            tier: 'hot',
+                            tier: 'cold',
+                            scope: 'cold',
                             chat_id: chatId
                         })
                     });
@@ -3818,10 +4114,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         await refreshMemoryVaultData();
                     } else {
                         const err = await res.json().catch(() => ({ detail: 'Failed to create memory' }));
-                        alert(`Error creating hot memory: ${err.detail || 'Unknown error'}`);
+                        alert(`Error creating chat memory: ${err.detail || 'Unknown error'}`);
                     }
                 } catch (e) {
-                    console.error('[MemoryVault] Hot memory creation error:', e);
+                    console.error('[MemoryVault] Chat memory creation error:', e);
                     alert('Failed to connect to backend memory API.');
                 }
             };
@@ -3842,7 +4138,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     coldInput.focus();
                     return;
                 }
-                const cat = coldCategory ? coldCategory.value : 'preference';
+                const cat = coldCategory ? coldCategory.value : 'personal';
 
                 try {
                     const res = await fetch('/api/memory', {
@@ -3851,7 +4147,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         body: JSON.stringify({
                             content: text,
                             category: cat,
-                            tier: 'cold'
+                            tier: 'cold',
+                            scope: 'global'
                         })
                     });
                     if (res.ok) {
@@ -3859,10 +4156,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         await refreshMemoryVaultData();
                     } else {
                         const err = await res.json().catch(() => ({ detail: 'Failed to create memory' }));
-                        alert(`Error creating cold memory: ${err.detail || 'Unknown error'}`);
+                        alert(`Error creating global memory: ${err.detail || 'Unknown error'}`);
                     }
                 } catch (e) {
-                    console.error('[MemoryVault] Cold memory creation error:', e);
+                    console.error('[MemoryVault] Global memory creation error:', e);
                     alert('Failed to connect to backend memory API.');
                 }
             };

@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI):
     # it would consume the VRAM reserved for the resident Gemma + Qwen pair.
     if not config.FLASH_DEFAULT_ENABLED:
         model_manager.rearm_agent_background()
+    try:
+        from flash.memory_worker import memory_worker
+        threading.Thread(target=memory_worker.recover_pending, name="sage-memory-recovery", daemon=True).start()
+        from memory_system.index_outbox import index_outbox
+        threading.Thread(target=index_outbox.recover, name="sage-index-recovery", daemon=True).start()
+    except Exception as exc:
+        logger.warning("Memory curator recovery unavailable: %s", exc)
     yield
     # Shutdown
     print("Shutting down SAGE and stopping any running model server...")
@@ -54,7 +61,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="SAGE - Multi-Model Agent Orchestrator", lifespan=lifespan)
 
 # Bump when shipping UI/static changes so HTML references cannot stick on old JS.
-STATIC_ASSET_VERSION = "local-memory-2"
+STATIC_ASSET_VERSION = "memory-observer-4"
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -283,10 +290,8 @@ async def deploy_flash_model(payload: Dict[str, Any] = Body(...)):
     from starlette.concurrency import run_in_threadpool
     from flash.transport import flash_transport
     role = str(payload.get("role") or "")
-    if role == "memory":
-        raise HTTPException(status_code=400, detail="The Flash 2B memory role is disabled. Use the local SAGE memory ledger.")
-    if role not in {"gemma", "qwen"}:
-        raise HTTPException(status_code=400, detail="role must be gemma or qwen")
+    if role not in {"gemma", "qwen", "memory"}:
+        raise HTTPException(status_code=400, detail="role must be gemma, qwen, or memory")
     try:
         result = await run_in_threadpool(
             flash_transport.deploy,
@@ -299,6 +304,57 @@ async def deploy_flash_model(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Remote deployment failed: {exc}") from exc
+
+
+@app.get("/api/observer/runs")
+async def observer_runs(limit: int = 30):
+    from core.observer import observer
+    return {"status": "success", "runs": observer.runs(limit)}
+
+
+@app.get("/api/observer/runs/{run_id}")
+async def observer_run(run_id: str, after: int = 0):
+    from core.observer import observer
+    return {"status": "success", "run_id": run_id, "events": observer.events(run_id, after)}
+
+
+@app.get("/api/observer/stream/{run_id}")
+async def observer_stream(run_id: str, request: Request, after: int = 0):
+    """Live sanitized execution events for the compact and full Observer UI."""
+    import asyncio
+    from core.observer import observer
+
+    async def generate():
+        sequence = max(0, int(after))
+        idle = 0
+        while not await request.is_disconnected():
+            events = observer.events(run_id, sequence)
+            if events:
+                idle = 0
+                for event in events:
+                    sequence = max(sequence, int(event["sequence"]))
+                    yield f"id: {sequence}\nevent: observation\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            else:
+                idle += 1
+                if idle % 30 == 0:
+                    yield f"event: heartbeat\ndata: {json.dumps({'run_id': run_id, 'sequence': sequence})}\n\n"
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no",
+    })
+
+
+@app.get("/api/memory/jobs")
+async def memory_jobs(status: Optional[str] = None, limit: int = 100):
+    from memory_system.job_store import memory_job_store
+    return {"status": "success", "jobs": memory_job_store.list(status=status, limit=limit)}
+
+
+@app.get("/api/memory/index-outbox")
+async def memory_index_outbox(status: Optional[str] = None, limit: int = 100):
+    from memory_system.index_outbox import index_outbox
+    return {"status": "success", "events": index_outbox.list(status=status, limit=limit)}
 
 @app.post("/api/stop")
 async def stop_server():
@@ -755,6 +811,7 @@ async def flash_endpoint(
     objective: str = Form(...),
     files: Optional[List[UploadFile]] = File(None),
     session_id: Optional[str] = Form(None),
+    observer_run_id: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
     save_history: Optional[str] = Form(None),
 ):
@@ -785,6 +842,7 @@ async def flash_endpoint(
             attachments=attachments_manifest,
             file_map=file_map,
             session_id=session_id,
+            observer_run_id=observer_run_id,
             user_id=config.DEFAULT_USER_ID,
             temperature=temp_value,
             save_history=persist,
@@ -799,6 +857,11 @@ async def flash_endpoint(
         return JSONResponse(content=result)
     except Exception as exc:
         logger.exception("Flash request failed")
+        try:
+            from core.observer import observer
+            observer.emit(observer_run_id or session_id or "unknown", "sage", "request", "failed", "Flash request failed", {"error": str(exc)})
+        except Exception:
+            pass
         return JSONResponse(status_code=500, content={"status": "error", "error": str(exc)})
 
 @app.post("/api/chat/stream")
@@ -899,17 +962,67 @@ async def get_memory_status():
     except (Exception, BaseException) as e:
         chroma_status = f"unavailable ({e.__class__.__name__})"
 
-    # 3. Model runtime status
-    # Models are not installed on this machine per requirements
+    # 3. Curator runtime status (the model may be local CPU or a remote role).
+    from flash.runtime_config import runtime_config
+    from flash.local_manager import local_flash_manager
+    from flash.catalog import load_catalog
+    from memory_system.job_store import memory_job_store
+    memory_role = runtime_config.role("memory")
+    recent_jobs = memory_job_store.list(limit=100)
+    provider = memory_role.get("provider")
+    failed_jobs = [job for job in recent_jobs if job.get("status") == "failed"]
+    latest_failed = bool(recent_jobs and recent_jobs[0].get("status") == "failed")
+    configured = provider != "disabled"
+    runtime_detail = ""
+    available = configured
+    if provider in {"local_cpu", "local_gpu"}:
+        memory_runtime = local_flash_manager.status().get("memory", {})
+        catalog_memory = load_catalog()["memory"]
+        model_root = Path(config.MODEL_DIR or config.BASE_DIR / "models")
+        prerequisites = bool(
+            config.LLAMA_SERVER_PATH and Path(config.LLAMA_SERVER_PATH).is_file()
+            and (model_root / catalog_memory["file"]).is_file()
+        )
+        available = bool(memory_runtime.get("healthy") or prerequisites)
+        runtime_detail = "running and healthy" if memory_runtime.get("healthy") else (
+            "configured; starts with the next memory task" if prerequisites
+            else "not runnable: configure LLAMA_SERVER_PATH and install the catalog memory GGUF, or select a remote endpoint"
+        )
+    elif provider == "remote":
+        available = bool(memory_role.get("connection") and memory_role.get("model_id"))
+        runtime_detail = "remote endpoint configured" if available else "remote endpoint is incomplete"
+    else:
+        runtime_detail = "disabled in Flash runtime settings"
+    if latest_failed:
+        label = "CURATOR NEEDS ATTENTION"
+    elif available:
+        label = "2B CURATOR READY"
+    elif configured:
+        label = "CURATOR NOT CONFIGURED"
+    else:
+        label = "CURATOR DISABLED"
     model_status = {
-        "available": False,
-        "label": "MODEL UNAVAILABLE",
-        "detail": "Model weights are not installed on this host. Deterministic memory operations, persistence, context budgeting, and tools are fully operational.",
+        "available": available and not latest_failed,
+        "configured": configured,
+        "label": label,
+        "detail": f"Provider: {provider}; model: {memory_role.get('model_id')}; {runtime_detail}. Global facts are extracted after every completed turn; Cold summaries are created when a turn leaves the five-turn Hot window.",
+        "provider": provider,
+        "model_id": memory_role.get("model_id"),
+        "last_error": recent_jobs[0].get("error") if latest_failed else None,
+        "jobs": {
+            state: sum(1 for job in recent_jobs if job.get("status") == state)
+            for state in ("queued", "scheduled", "running", "completed", "failed")
+        },
     }
 
     # 4. Summary counts
-    active_hot = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, memory_tier="hot", status="active", limit=500))
-    active_cold = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, memory_tier="cold", status="active", limit=500))
+    from memory_system.quality import is_valid_memory
+    semantic = sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, memory_tier="cold", status="active", limit=500)
+    semantic = [memory for memory in semantic if is_valid_memory(
+        str(memory.get("content") or ""), "global" if not memory.get("source_chat_id") else "cold"
+    )]
+    active_cold = sum(1 for memory in semantic if memory.get("source_chat_id"))
+    active_global = sum(1 for memory in semantic if not memory.get("source_chat_id"))
     compacted_count = len(sage_memory.list_memories(user_id=config.DEFAULT_USER_ID, status="compacted", limit=500))
 
     return {
@@ -935,12 +1048,17 @@ async def get_memory_status():
         },
         "model_runtime": model_status,
         "counts": {
-            "hot_active": active_hot,
-            "cold_active": active_cold,
+            # Legacy response keys are retained for the existing UI: its left
+            # board displays chat-scoped Cold and its right board displays Global.
+            "hot_active": active_cold,
+            "cold_active": active_global,
+            "chat_cold_active": active_cold,
+            "global_active": active_global,
             "derived_compacted": compacted_count,
         },
         "configuration": {
-            "recent_chat_max_messages": config.SAGE_RECENT_CHAT_MAX_MESSAGES,
+            "recent_chat_max_turns": config.SAGE_RECENT_CHAT_MAX_TURNS,
+            "recent_chat_budget_tokens": config.SAGE_RECENT_CHAT_BUDGET_TOKENS,
             "context_budget_tokens": config.SAGE_CONTEXT_MEMORY_BUDGET_TOKENS,
             "global_budget_tokens": config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS,
             "global_max_items": config.SAGE_GLOBAL_MEMORY_MAX_ITEMS,
@@ -950,8 +1068,9 @@ async def get_memory_status():
 
 @app.get("/api/memory/recent-chat")
 async def get_recent_chat_memory(chat_id: Optional[str] = None, limit: int = 5):
-    """Retrieve recent conversation messages from the ledger."""
+    """Retrieve the bounded recent completed-turn window from the ledger."""
     from sage_memory import sage_memory
+    from memory_system.coordinator import memory_coordinator
 
     resolved_chat_id = chat_id
     if not resolved_chat_id:
@@ -960,28 +1079,23 @@ async def get_recent_chat_memory(chat_id: Optional[str] = None, limit: int = 5):
         if chats:
             resolved_chat_id = chats[0]["chat_id"]
 
-    messages = []
+    recent = {"messages": [], "turn_count": 0, "token_estimate": 0}
     if resolved_chat_id:
-        all_msgs = sage_memory.get_messages(resolved_chat_id)
-        clamped_limit = max(1, min(limit or config.SAGE_RECENT_CHAT_MAX_MESSAGES, 50))
-        recent_slice = all_msgs[-clamped_limit:] if all_msgs else []
-        messages = [
-            {
-                "msg_id": str(m.get("msg_id", "")),
-                "role": str(m.get("role", "")),
-                "content": str(m.get("content", "")),
-                "created_at": str(m.get("created_at", "")),
-            }
-            for m in recent_slice
-        ]
+        recent = memory_coordinator.recent_turns(
+            resolved_chat_id,
+            max_turns=max(1, min(limit or config.SAGE_RECENT_CHAT_MAX_TURNS, 20)),
+            token_budget=config.SAGE_RECENT_CHAT_BUDGET_TOKENS,
+        )
 
     return {
         "status": "success",
         "chat_id": resolved_chat_id,
-        "configured_window": config.SAGE_RECENT_CHAT_MAX_MESSAGES,
+        "configured_window_turns": config.SAGE_RECENT_CHAT_MAX_TURNS,
         "label": "Recent conversation context - chronological, not semantic memory.",
-        "count": len(messages),
-        "messages": messages,
+        "count": len(recent["messages"]),
+        "turn_count": recent["turn_count"],
+        "token_estimate": recent["token_estimate"],
+        "messages": recent["messages"],
     }
 
 
@@ -992,10 +1106,12 @@ async def list_memories_api(
     category: Optional[str] = None,
     status: Optional[str] = "active",
     search: Optional[str] = None,
+    scope: Optional[str] = None,
     user_id: Optional[str] = None,
 ):
     """List semantic memories with filtering and search."""
     from sage_memory import sage_memory, ALLOWED_CATEGORIES
+    from memory_system.quality import is_valid_memory
 
     effective_user_id = user_id or config.DEFAULT_USER_ID
     tier_filter = tier.lower().strip() if tier and tier.lower().strip() in ("hot", "cold") else None
@@ -1025,8 +1141,18 @@ async def list_memories_api(
             limit=500,
         )
 
-    # Derived memories query (status == 'compacted' or category == 'summary')
-    derived_memories = [m for m in memories if m.get("status") == "compacted" or m.get("category") == "summary"]
+    for memory in memories:
+        memory["scope"] = "global" if not memory.get("source_chat_id") and memory.get("category") == "personal" else "cold"
+    memories = [memory for memory in memories if is_valid_memory(str(memory.get("content") or ""), memory["scope"])]
+    memories = [memory for memory in memories if memory["scope"] != "global" or memory.get("category") == "personal"]
+    if chat_id and not tier_filter:
+        memories = [memory for memory in memories if memory.get("source_chat_id") in {None, chat_id}]
+    if scope in {"global", "cold"}:
+        memories = [memory for memory in memories if memory["scope"] == scope]
+
+    # Backward-compatible key. The UI now presents all chat-scoped Cold
+    # records, not only records whose curator happened to choose "summary".
+    derived_memories = [m for m in memories if m.get("scope") == "cold"]
 
     return {
         "status": "success",
@@ -1051,11 +1177,19 @@ async def create_memory_api(payload: Dict[str, Any] = Body(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    scope = str(payload.get("scope") or "").lower().strip()
     tier_raw = str(payload.get("tier") or payload.get("memory_tier") or "cold").lower().strip()
-    tier = "hot" if tier_raw == "hot" else "cold"
+    if not scope and tier_raw != "hot":
+        scope = "cold"
+    if scope == "global" and validated_cat != "personal":
+        raise HTTPException(
+            status_code=400,
+            detail="Global memory is reserved for personal information. Store preferences, projects, instructions, and other details in Chat Memory.",
+        )
+    tier = "hot" if tier_raw == "hot" and not scope else "cold"
 
     chat_id = payload.get("chat_id")
-    if tier == "hot" and not chat_id:
+    if (tier == "hot" or scope == "cold") and not chat_id:
         chats = sage_memory.list_chats(config.DEFAULT_USER_ID, limit=1)
         if chats:
             chat_id = chats[0]["chat_id"]
@@ -1072,11 +1206,37 @@ async def create_memory_api(payload: Dict[str, Any] = Body(...)):
         category=validated_cat,
         importance=importance,
         confidence=confidence,
-        source_chat_id=chat_id if tier == "hot" else payload.get("chat_id"),
+        source_chat_id=None if scope == "global" else chat_id,
         memory_tier=tier,
     )
+    stored["scope"] = "global" if not stored.get("source_chat_id") else "cold"
 
     return {"status": "success", "memory": stored}
+
+
+@app.post("/api/memory/bulk-hard-delete")
+async def bulk_hard_delete_global_memories(payload: Dict[str, Any] = Body(...)):
+    """Permanently delete selected Global-memory records owned by the current user."""
+    from sage_memory import sage_memory
+
+    requested_ids = payload.get("memory_ids")
+    if not isinstance(requested_ids, list) or not requested_ids:
+        raise HTTPException(status_code=400, detail="memory_ids must be a non-empty list.")
+    ids = list(dict.fromkeys(str(memory_id).strip() for memory_id in requested_ids if str(memory_id).strip()))[:500]
+    user_id = str(payload.get("user_id") or config.DEFAULT_USER_ID)
+    deleted: List[str] = []
+    skipped: List[str] = []
+    for memory_id in ids:
+        existing = sage_memory.get_memory(memory_id)
+        # This endpoint intentionally cannot remove chat-scoped records.
+        if not existing or existing.get("user_id") != user_id or existing.get("source_chat_id"):
+            skipped.append(memory_id)
+            continue
+        if sage_memory.hard_delete_memory(memory_id):
+            deleted.append(memory_id)
+        else:
+            skipped.append(memory_id)
+    return {"status": "success", "hard_deleted": len(deleted), "deleted_ids": deleted, "skipped_ids": skipped}
 
 
 @app.put("/api/memory/{memory_id}")
@@ -1157,6 +1317,20 @@ async def get_memory_activity_api(user_id: Optional[str] = None, limit: int = 25
     return {"status": "success", "activities": events}
 
 
+@app.post("/api/memory/activity/bulk-hard-delete")
+async def bulk_hard_delete_memory_activity(payload: Dict[str, Any] = Body(...)):
+    """Permanently delete selected audit-log rows belonging to the current user."""
+    from sage_memory import sage_memory
+
+    requested_ids = payload.get("activity_ids")
+    if not isinstance(requested_ids, list) or not requested_ids:
+        raise HTTPException(status_code=400, detail="activity_ids must be a non-empty list.")
+    ids = list(dict.fromkeys(str(activity_id).strip() for activity_id in requested_ids if str(activity_id).strip()))[:500]
+    user_id = str(payload.get("user_id") or config.DEFAULT_USER_ID)
+    deleted = sage_memory.hard_delete_activity(ids, user_id)
+    return {"status": "success", "hard_deleted": deleted, "requested": len(ids)}
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
 
@@ -1190,9 +1364,10 @@ async def index():
 
 @app.get("/memory")
 async def memory_view():
-    memory_file = config.STATIC_DIR / "memory.html"
-    if memory_file.exists():
-        return _html_with_asset_version(memory_file)
+    """Open the canonical in-app Memory workspace, not the retired mock page."""
+    index_file = config.STATIC_DIR / "index.html"
+    if index_file.exists():
+        return _html_with_asset_version(index_file)
     return JSONResponse({"message": "Memory view pending."})
 
 if __name__ == "__main__":

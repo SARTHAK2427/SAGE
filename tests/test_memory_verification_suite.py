@@ -100,15 +100,18 @@ def test_api_memory_status(client):
     assert "status" in data["vector_index"]
     assert "collections" in data["vector_index"]
 
-    assert data["model_runtime"]["available"] is False
-    assert data["model_runtime"]["label"] == "MODEL UNAVAILABLE"
+    assert isinstance(data["model_runtime"]["available"], bool)
+    assert data["model_runtime"]["label"] in {
+        "2B CURATOR READY", "CURATOR NOT CONFIGURED", "CURATOR NEEDS ATTENTION", "CURATOR DISABLED",
+    }
+    assert data["model_runtime"]["provider"] in {"local_cpu", "local_gpu", "remote"}
     assert "detail" in data["model_runtime"]
 
     assert "counts" in data
     assert "hot_active" in data["counts"]
     assert "cold_active" in data["counts"]
 
-    assert data["configuration"]["recent_chat_max_messages"] == 5
+    assert data["configuration"]["recent_chat_max_turns"] == 5
     assert data["configuration"]["global_budget_tokens"] == config.SAGE_GLOBAL_MEMORY_BUDGET_TOKENS
 
 
@@ -185,7 +188,7 @@ def test_api_memory_lifecycle_crud(client):
 
 
 def test_api_recent_chat_memory(client):
-    """GET /api/memory/recent-chat must return chronological messages up to limit."""
+    """GET /api/memory/recent-chat returns chronological completed turns."""
     chat_id = "test_chat_continuity_456"
     # Seed 7 messages in the ledger using the correct method: write_message
     for i in range(1, 8):
@@ -202,12 +205,14 @@ def test_api_recent_chat_memory(client):
     data = res.json()
     assert data["status"] == "success"
     assert data["chat_id"] == chat_id
-    assert data["count"] == 5
+    assert data["turn_count"] == 3
+    assert data["count"] == 6
     messages = data["messages"]
-    assert len(messages) == 5
-    # Must be the last 5 messages in chronological order (turn #3 through turn #7)
-    assert messages[0]["content"] == "Message turn #3"
-    assert messages[-1]["content"] == "Message turn #7"
+    assert len(messages) == 6
+    # Seven alternating messages form three completed pairs plus one open user
+    # turn, which is retained in the ledger but excluded from Hot context.
+    assert messages[0]["content"] == "Message turn #1"
+    assert messages[-1]["content"] == "Message turn #6"
     assert "Recent conversation context" in data["label"]
 
 
@@ -237,6 +242,39 @@ def test_api_activity_audit_log(client):
     assert "STORE" in events
     assert "PROMOTE" in events
     assert "SEARCH" in events
+
+
+def test_api_bulk_hard_delete_global_memory_and_activity_log(client, monkeypatch):
+    """Bulk actions permanently remove only selected Global records and audit rows."""
+    monkeypatch.setattr(sage_memory_module, "_sync_index_delete", lambda *_args, **_kwargs: None)
+    global_mem = sage_memory.store_memory(
+        user_id=config.DEFAULT_USER_ID, content="Permanent global test record", category="fact",
+        source_chat_id=None, memory_tier="cold",
+    )
+    chat_mem = sage_memory.store_memory(
+        user_id=config.DEFAULT_USER_ID, content="Protected chat-scoped record", category="fact",
+        source_chat_id="chat-protected", memory_tier="cold",
+    )
+    response = client.post("/api/memory/bulk-hard-delete", json={
+        "memory_ids": [global_mem["memory_id"], chat_mem["memory_id"]],
+    })
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["hard_deleted"] == 1
+    assert global_mem["memory_id"] in payload["deleted_ids"]
+    assert sage_memory.get_memory(global_mem["memory_id"]) is None
+    assert sage_memory.get_memory(chat_mem["memory_id"]) is not None
+
+    sage_memory.log_activity("SEARCH", config.DEFAULT_USER_ID, details="Hard-delete test activity")
+    activities = sage_memory.get_recent_activity(config.DEFAULT_USER_ID, limit=10)
+    target = next(activity for activity in activities if activity["details"] == "Hard-delete test activity")
+    activity_response = client.post("/api/memory/activity/bulk-hard-delete", json={
+        "activity_ids": [target["activity_id"]],
+    })
+    assert activity_response.status_code == 200, activity_response.text
+    assert activity_response.json()["hard_deleted"] == 1
+    remaining_ids = {activity["activity_id"] for activity in sage_memory.get_recent_activity(config.DEFAULT_USER_ID, limit=20)}
+    assert target["activity_id"] not in remaining_ids
 
 
 # ══════════════════════════════════════════════════════════════════════════

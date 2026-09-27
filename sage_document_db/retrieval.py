@@ -18,7 +18,7 @@ Mental contract frozen in code:
 from __future__ import annotations
 from pathlib import Path
 
-from .config import ARTIFACTS_ROOT, CHROMA_ROOT, DEFAULT_RAG_TOP_K
+from .config import ARTIFACTS_ROOT, CHROMA_ROOT, DEFAULT_RAG_TOP_K, RERANKER_CANDIDATE_K
 from .models import ExactSearchResult, RagResult
 
 
@@ -28,9 +28,10 @@ class RetrievalService:
     Typically instantiated once via SageDocumentDB and reused.
     """
 
-    def __init__(self, chroma_store, artifact_store) -> None:
+    def __init__(self, chroma_store, artifact_store, rerank_service=None) -> None:
         self._chroma = chroma_store
         self._artifacts = artifact_store
+        self._reranker = rerank_service
 
     # ------------------------------------------------------------------
     # Semantic search
@@ -64,14 +65,15 @@ class RetrievalService:
 
         query_vector = self._chroma._emb.embed_query(query)
 
+        use_reranker = bool(self._reranker and self._reranker.is_enabled)
         results = self._chroma.rag_query(
             query_vector=query_vector,
-            top_k=top_k,
+            top_k=max(top_k, RERANKER_CANDIDATE_K) if use_reranker else top_k,
             doc_ids=doc_ids,
             include_source=include_source,
             include_derived=include_derived,
         )
-        return results
+        return self._reranker.rerank(query, results, top_k) if use_reranker else results
 
     # ------------------------------------------------------------------
     # Exact / literal search
@@ -140,14 +142,21 @@ class RetrievalService:
             stages["embedding_ms"] = (time.perf_counter() - t_emb) * 1000.0
 
             t_query = time.perf_counter()
-            results = self._chroma.rag_query(
+            use_reranker = bool(self._reranker and self._reranker.is_enabled)
+            candidates = self._chroma.rag_query(
                 query_vector=query_vector,
-                top_k=top_k,
+                top_k=max(top_k, RERANKER_CANDIDATE_K) if use_reranker else top_k,
                 doc_ids=doc_ids,
                 include_source=include_source,
                 include_derived=include_derived,
             )
             stages["chroma_query_ms"] = (time.perf_counter() - t_query) * 1000.0
+            if use_reranker:
+                t_rerank = time.perf_counter()
+                results = self._reranker.rerank(query_clean, candidates, top_k)
+                stages["rerank_ms"] = (time.perf_counter() - t_rerank) * 1000.0
+            else:
+                results = candidates
 
             total_ms = (time.perf_counter() - t0) * 1000.0
             timing = build_timing_payload(duration_ms=total_ms, stages=stages)
@@ -158,6 +167,9 @@ class RetrievalService:
                 doc_ids_filter=doc_ids,
                 include_source=include_source,
                 include_derived=include_derived,
+                embedding_model=self._chroma._emb.model_name,
+                reranker_model=self._reranker.model_name if use_reranker else None,
+                reranker_enabled=use_reranker,
                 timing=timing,
             )
         except Exception as e:

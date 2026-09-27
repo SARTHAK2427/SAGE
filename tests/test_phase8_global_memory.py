@@ -1,4 +1,4 @@
-"""Phase 8 integration tests for automatic, bounded cold-memory injection."""
+"""Integration tests for bounded Hot context and on-demand semantic memory."""
 
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ def isolated_phase8_memory(monkeypatch):
     temp_dir = tempfile.TemporaryDirectory()
     root = Path(temp_dir.name)
     monkeypatch.setenv("SAGE_MEMORY_DB", "sqlite")
+    # Phase 8 tests exercise prompt injection and user isolation. Keep the
+    # asynchronous curator from outliving each temporary SQLite fixture; its
+    # scheduling and storage behavior is covered by test_memory_system_v2.
+    monkeypatch.setattr("flash.memory_worker.memory_worker.schedule_turn", lambda **_kwargs: None)
     set_sqlite_path(str(root / "phase8.db"))
     sage_memory._initialized_backends.clear()
 
@@ -95,8 +99,7 @@ def _run_and_capture_initial_gemma_payload(monkeypatch, run_state: RunState, obj
     return result, agent_inputs[0][1]["content"]
 
 
-def test_global_memory_from_another_chat_reaches_gemma_automatically(monkeypatch):
-    """A cold memory from Chat A is present in Chat B's first Gemma payload."""
+def test_semantic_memory_is_not_dumped_into_initial_gemma_payload(monkeypatch):
     stored = memory_store_cold(
         user_id="phase8_alice", chat_id="chat_A",
         content="Alice is building SAGE as a local-first AI workbench.", category="project", importance=0.95,
@@ -109,11 +112,10 @@ def test_global_memory_from_another_chat_reaches_gemma_automatically(monkeypatch
         "What should we build next?",
     )
 
-    assert "PERSISTENT MEMORY:" in payload
-    assert "local-first AI workbench" in payload
-    assert "memory_search" not in json.dumps(result["trace"])
-    injected = next(item for item in result["trace"] if item["action"] == "global_memory_injected")
-    assert stored["memory"]["memory_id"] in injected["global_memory_ids"]
+    assert "PERSISTENT MEMORY:" not in payload
+    assert "local-first AI workbench" not in payload
+    budget = next(item for item in result["trace"] if item["action"] == "memory_context_budgeted")
+    assert budget["semantic_memory_injected"] is False
 
 
 def test_global_memory_is_strictly_user_isolated(monkeypatch):
@@ -126,7 +128,7 @@ def test_global_memory_is_strictly_user_isolated(monkeypatch):
         "Continue.",
     )
 
-    assert "User A private durable preference." in payload
+    assert "User A private durable preference." not in payload
     assert "User B secret project name." not in payload
 
 
@@ -143,7 +145,7 @@ def test_inactive_cold_memory_is_not_injected(monkeypatch):
     assert "This deleted fact must not reach Gemma." not in payload
 
 
-def test_global_retrieval_honors_item_and_token_budgets(monkeypatch):
+def test_initial_prompt_does_not_consume_global_memory_budget(monkeypatch):
     monkeypatch.setattr(config, "SAGE_GLOBAL_MEMORY_MAX_ITEMS", 2)
     monkeypatch.setattr(config, "SAGE_GLOBAL_MEMORY_BUDGET_TOKENS", 40)
     monkeypatch.setattr(config, "SAGE_CONTEXT_MEMORY_BUDGET_TOKENS", 80)
@@ -157,10 +159,9 @@ def test_global_retrieval_honors_item_and_token_budgets(monkeypatch):
         monkeypatch,
         RunState(user_id="phase8_bounded", chat_id="chat_bound", user_text="Use my preferences."), "Use my preferences.",
     )
-    injected = next(item for item in result["trace"] if item["action"] == "global_memory_injected")
-    assert injected["global_memory_count"] == 2
-    assert injected["global_memory_tokens"] <= 40
-    assert payload.count("Bounded durable memory number") == 2
+    budget = next(item for item in result["trace"] if item["action"] == "memory_context_budgeted")
+    assert budget["semantic_memory_injected"] is False
+    assert payload.count("Bounded durable memory number") == 0
 
 
 def test_complete_current_request_survives_memory_pressure(monkeypatch):
@@ -186,7 +187,7 @@ def test_global_memory_failure_does_not_break_chat(monkeypatch):
             run_state=RunState(user_id="phase8_failure", chat_id="chat_failure"),
         )
     assert result["status"] == "success"
-    assert any(item["action"] == "global_memory_retrieval_failed" for item in result["trace"])
+    assert any(item["action"] == "memory_context_budgeted" for item in result["trace"])
 
 
 def test_existing_memory_operations_and_gemma_wiring_remain_available():

@@ -727,6 +727,6 @@ def test_e2e_gemma_memory_store_tool_call():
     assert len(chroma_res["ids"]) == 1
 
     # Verify retrieval works via semantic search
-    search = memory_search(user_id=trusted_user_id, query="Python data engineering")
+    search = memory_search(user_id=trusted_user_id, chat_id=trusted_chat_id, query="Python data engineering")
     assert search["status"] == "success"
     assert any(m["memory_id"] == mem["memory_id"] for m in search["memories"])

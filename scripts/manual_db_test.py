@@ -12,15 +12,8 @@ Subcommands:
   rebuild-all       Rebuild entire Chroma DB from artifacts
 
 Usage examples:
-  python manual_db_test.py ingest "samples/test.pdf" --debug
-  python manual_db_test.py rag "AI employee with four years experience" --top-k 5
-  python manual_db_test.py exact "320000"
-  python manual_db_test.py exact "AUTH_.*_V2" --regex
-  python manual_db_test.py fetch doc_a81f42c91e txt_000004
-  python manual_db_test.py add-image-analysis --doc-id doc_x --image-id img_000001 ...
-  python manual_db_test.py add-image-analysis --json samples/derived_test.json
-  python manual_db_test.py reindex-doc doc_a81f42c91e
-  python manual_db_test.py rebuild-all
+  python -m scripts.manual_db_test ingest "samples/test.pdf" --debug
+  python -m scripts.manual_db_test rag "AI employee with four years experience" --top-k 5
 """
 
 import argparse
@@ -30,13 +23,16 @@ import sys
 from pathlib import Path
 
 # Auto-switch to project venv if chromadb/docling are not installed in current interpreter
-_venv_python = Path(__file__).resolve().parent / "sage_venv" / "Scripts" / "python.exe"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+_venv_python = PROJECT_ROOT / "sage_venv" / "Scripts" / "python.exe"
 if _venv_python.exists() and sys.executable.lower() != str(_venv_python).lower():
     try:
         import chromadb  # type: ignore # noqa: F401
     except ImportError:
         import subprocess
-        sys.exit(subprocess.call([str(_venv_python), str(Path(__file__).resolve())] + sys.argv[1:]))
+        sys.exit(subprocess.call([str(_venv_python), "-m", "scripts.manual_db_test"] + sys.argv[1:], cwd=PROJECT_ROOT))
 
 
 def _get_db():
@@ -243,7 +239,7 @@ def cmd_add_image_analysis(args) -> None:
     print(f"  derived_file    : {result.derived_file}")
     print()
     print("Now test derived retrieval:")
-    print(f'  python manual_db_test.py rag "photo with blue background"\n')
+    print(f'  python -m scripts.manual_db_test rag "photo with blue background"\n')
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +289,7 @@ def cmd_rebuild_all(args) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="manual_db_test.py",
+        prog="python -m scripts.manual_db_test",
         description="SAGE Document Database — manual test CLI",
     )
     sub = parser.add_subparsers(dest="command", required=True)

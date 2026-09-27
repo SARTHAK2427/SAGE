@@ -309,6 +309,18 @@ def _parse(
                     original_size=original_size or orig_path.stat().st_size,
                     docling_error=str(docling_err),
                 )
+            if orig_path.suffix.lower() == ".pdf":
+                from .pdf_fallback import parse_pdf_fallback
+                from .utils import make_doc_id
+                effective_sha = original_sha or sha256_file(orig_path)
+                return parse_pdf_fallback(
+                    working_path=source_path,
+                    original_source_path=orig_path,
+                    doc_id=doc_id or make_doc_id(effective_sha),
+                    original_sha=effective_sha,
+                    original_size=original_size or orig_path.stat().st_size,
+                    docling_error=str(docling_err),
+                )
             raise
     elif parser_tag == "txt":
         from .simple_parsers import parse_txt

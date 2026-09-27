@@ -103,7 +103,7 @@ def memory_search(
     if action == "memory_search_hot":
         return memory_search_hot(user_id=user_id, chat_id=chat_id, query=query, category=category, limit=limit, **kwargs)
     elif action == "memory_search_cold":
-        return memory_search_cold(user_id=user_id, query=query, category=category, limit=limit, **kwargs)
+        return memory_search_cold(user_id=user_id, chat_id=chat_id, query=query, category=category, limit=limit, **kwargs)
     elif action in ("memory_store_hot", "store_hot"):
         return memory_store_hot(user_id=user_id, chat_id=chat_id, query=query, category=category, **kwargs)
     elif action in ("memory_store_cold", "store_cold"):
@@ -118,7 +118,7 @@ def memory_search(
         return memory_search_hot(user_id=user_id, chat_id=chat_id, query=query, category=category, limit=limit, **kwargs)
 
     # Otherwise default to cold search
-    return memory_search_cold(user_id=user_id, query=query, category=category, limit=limit, memory_needed=memory_needed, **kwargs)
+    return memory_search_cold(user_id=user_id, chat_id=chat_id, query=query, category=category, limit=limit, memory_needed=memory_needed, **kwargs)
 
 
 def memory_search_hot(
@@ -222,13 +222,15 @@ def memory_search_hot(
 
 def memory_search_cold(
     user_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
     query: Optional[str] = None,
     category: Optional[str] = None,
     limit: Optional[int] = 5,
     memory_needed: Optional[bool] = None,
+    scope: str = "both",
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Execute controlled cold memory search scoped to trusted user_id across chats."""
+    """Search older chat memory and/or global memory through the canonical coordinator."""
     # 1. No-memory decision check
     if memory_needed is False:
         return {
@@ -262,62 +264,82 @@ def memory_search_cold(
     # 4. Determine active user_id
     effective_user_id = user_id or config.DEFAULT_USER_ID
 
-    # 5. Semantic retrieval via Chroma cold vector search with canonical PostgreSQL/SQLite verification
+    validated_scope = str(scope or "both").lower().strip()
+    if validated_scope not in {"cold", "global", "both"}:
+        return {
+            "status": "error",
+            "error": {"code": "INVALID_MEMORY_SCOPE", "message": "scope must be cold, global, or both.", "retryable": False},
+        }
+
+    # 5. Chroma returns candidate IDs; the coordinator hydrates and authorises
+    # every record from the canonical relational ledger.
     has_query = query is not None and isinstance(query, str) and bool(query.strip())
     raw_memories: List[Dict[str, Any]] = []
 
     if has_query:
-        from sage_memory_index import memory_vector_index
-        vector_results = memory_vector_index.search_memory_vectors(
-            user_id=effective_user_id,
-            query=str(query).strip(),
-            tier="cold",
-            category=validated_cat,
-            limit=clamped_limit,
+        from memory_system.coordinator import memory_coordinator
+        result = memory_coordinator.search(
+            query=str(query).strip(), user_id=effective_user_id,
+            chat_id=str(chat_id or ""), scope=validated_scope,
+            limit=clamped_limit, run_id=str(chat_id or "memory-tool"),
         )
-        seen_ids = set()
-        for v_res in vector_results:
-            m_id = v_res.get("memory_id")
-            if m_id and m_id not in seen_ids:
-                canonical_mem = sage_memory.get_memory(m_id, touch_access=True)
-                if (
-                    canonical_mem
-                    and canonical_mem.get("user_id") == effective_user_id
-                    and canonical_mem.get("status") == "active"
-                    and canonical_mem.get("memory_tier") == "cold"
-                ):
-                    if not validated_cat or canonical_mem.get("category") == validated_cat:
-                        raw_memories.append(canonical_mem)
-                        seen_ids.add(m_id)
-        # The canonical database remains the source of truth.  Fall back to
-        # its deterministic ordering when semantic-index retrieval is empty.
-        if not raw_memories:
-            raw_memories = sage_memory.list_memories(
+        raw_memories = [m for m in result["memories"] if not validated_cat or m.get("category") == validated_cat]
+        # This legacy tool contract remains deterministic and complete within
+        # its bounded scope: Chroma ranks likely matches, while the canonical
+        # ledger fills an undersized result set. Flash itself calls the
+        # coordinator directly when it needs strictly semantic recall.
+        seen_ids = {str(memory.get("memory_id") or "") for memory in raw_memories}
+        if len(raw_memories) < clamped_limit:
+            candidates = sage_memory.list_memories(
                 user_id=effective_user_id,
                 category=validated_cat,
                 memory_tier="cold",
-                limit=clamped_limit,
+                limit=max(clamped_limit * 5, 20),
             )
-            for m in raw_memories:
-                sage_memory.touch_memory_access(m["memory_id"])
+            for memory in candidates:
+                source_chat = memory.get("source_chat_id")
+                if validated_scope == "global" and source_chat:
+                    continue
+                if validated_scope == "cold" and source_chat != chat_id:
+                    continue
+                if validated_scope == "both" and source_chat not in {None, chat_id}:
+                    continue
+                memory_id = str(memory.get("memory_id") or "")
+                if not memory_id or memory_id in seen_ids:
+                    continue
+                raw_memories.append(memory)
+                seen_ids.add(memory_id)
+                if len(raw_memories) >= clamped_limit:
+                    break
     else:
-        # Fallback to listing active cold memories
-        raw_memories = sage_memory.list_memories(
+        candidates = sage_memory.list_memories(
             user_id=effective_user_id,
             category=validated_cat,
             memory_tier="cold",
-            limit=clamped_limit,
+            limit=max(clamped_limit * 5, 20),
         )
+        for memory in candidates:
+            source_chat = memory.get("source_chat_id")
+            if validated_scope == "global" and source_chat:
+                continue
+            if validated_scope == "cold" and source_chat != chat_id:
+                continue
+            if validated_scope == "both" and source_chat not in {None, chat_id}:
+                continue
+            raw_memories.append(memory)
+            if len(raw_memories) >= clamped_limit:
+                break
         for m in raw_memories:
             sage_memory.touch_memory_access(m["memory_id"])
 
     sanitized = [_sanitize_memory_record(m) for m in raw_memories]
-    sage_memory.log_activity("SEARCH", user_id=effective_user_id, details=f"Cold search query: '{query or ''}', returned: {len(sanitized)}")
+    sage_memory.log_activity("SEARCH", user_id=effective_user_id, chat_id=chat_id, details=f"Scoped search ({validated_scope}) query: '{query or ''}', returned: {len(sanitized)}")
 
     return {
         "status": "success",
         "memories": sanitized,
         "returned": len(sanitized),
+        "scope": validated_scope,
     }
 
 

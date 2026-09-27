@@ -70,10 +70,10 @@
       "when": "When the current task requires recent conversation or task-specific context stored during the current session."
     },
     {
-      "capability": "retrieve durable user cold context",
+        "capability": "retrieve scoped older or global memory",
       "tool": "durable_memory",
       "function": "memory_search_cold",
-      "when": "When the current task may benefit from durable long-term user preferences, facts, project details, or standing instructions across all chats."
+        "when": "Only when information missing from the recent five-turn window is needed; choose cold for this chat, global for cross-chat facts, or both."
     },
     {
       "capability": "retrieve a specific durable memory by ID",

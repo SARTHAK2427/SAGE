@@ -8,7 +8,7 @@ Rules:
 - Do not load the model per chunk — keep one instance alive
 - count_tokens() uses the model's HuggingFace tokenizer directly
   so the Chunker never needs to import SentenceTransformer itself
-- Preserve 384-dimension vector compatibility (all-MiniLM-L6-v2)
+- BGE-M3 uses 1024-dimensional normalized vectors.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import os
 import logging
 from typing import TYPE_CHECKING
 
-from .config import EMBEDDING_MODEL, EMBEDDING_DEVICE, EMBED_BATCH_SIZE
+from .config import EMBEDDING_MODEL, EMBEDDING_DEVICE, EMBED_BATCH_SIZE, EMBEDDING_DIMENSION
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class EmbeddingService:
         if not texts:
             return []
         if getattr(self, "_is_mock", False):
-            return [[0.0] * 384 for _ in texts]
+            return [[0.0] * EMBEDDING_DIMENSION for _ in texts]
         vectors = self._model.encode(
             texts,
             batch_size=self._batch_size,
@@ -99,7 +99,7 @@ class EmbeddingService:
     def embed_query(self, text: str) -> list[float]:
         """Return normalized embedding for a single query string."""
         if getattr(self, "_is_mock", False):
-            return [0.0] * 384
+            return [0.0] * EMBEDDING_DIMENSION
         vector = self._model.encode(
             [text],
             batch_size=1,
@@ -135,7 +135,7 @@ class EmbeddingService:
         t0 = time.perf_counter()
         try:
             vectors = self.embed_documents(texts)
-            dim = len(vectors[0]) if vectors else 384
+            dim = len(vectors[0]) if vectors else EMBEDDING_DIMENSION
             approx_tokens = sum(self.count_tokens(t) for t in texts)
             total_ms = (time.perf_counter() - t0) * 1000.0
             timing = build_timing_payload(duration_ms=total_ms)
@@ -163,7 +163,7 @@ class EmbeddingService:
             return build_embedding_socket(
                 model_name=self.model_name,
                 device=self.device,
-                dimension=384,
+                dimension=EMBEDDING_DIMENSION,
                 input_count=len(texts),
                 vectors=[],
                 batch_size=self._batch_size,
@@ -208,7 +208,7 @@ class EmbeddingService:
             return build_embedding_socket(
                 model_name=self.model_name,
                 device=self.device,
-                dimension=384,
+                dimension=EMBEDDING_DIMENSION,
                 input_count=1,
                 vectors=[],
                 batch_size=1,
