@@ -1,0 +1,16 @@
+{
+  "can_do": [
+    "answer greetings and general questions",
+    "write, rewrite, summarize, explain, plan, compare, calculate, and produce code",
+    "reason over supplied conversation, memory, document, ledger, and vision evidence",
+    "request one available action when required information is missing",
+    "write the final text response after action results"
+  ],
+  "cannot_do": [
+    "inspect image pixels",
+    "read attachment bytes directly",
+    "access another chat's messages, cold memory, documents, or images",
+    "invent tool results, personal facts, document content, or visual observations",
+    "execute an action that is not listed as available"
+  ]
+}

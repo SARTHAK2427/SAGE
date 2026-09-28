@@ -16,7 +16,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Reques
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 import uvicorn
 
 import config
@@ -45,8 +45,8 @@ async def lifespan(app: FastAPI):
     try:
         from flash.memory_worker import memory_worker
         threading.Thread(target=memory_worker.recover_pending, name="sage-memory-recovery", daemon=True).start()
-        from memory_system.index_outbox import index_outbox
-        threading.Thread(target=index_outbox.recover, name="sage-index-recovery", daemon=True).start()
+        from memory_system.index_worker import index_worker_manager
+        index_worker_manager.start()
     except Exception as exc:
         logger.warning("Memory curator recovery unavailable: %s", exc)
     yield
@@ -55,30 +55,43 @@ async def lifespan(app: FastAPI):
     model_manager.stop_current()
     from flash.local_manager import local_flash_manager
     from flash.transport import flash_transport
+    from memory_system.index_worker import index_worker_manager
+    index_worker_manager.stop()
     local_flash_manager.stop_all()
     flash_transport.close()
 
 app = FastAPI(title="SAGE - Multi-Model Agent Orchestrator", lifespan=lifespan)
 
 # Bump when shipping UI/static changes so HTML references cannot stick on old JS.
-STATIC_ASSET_VERSION = "memory-observer-4"
+STATIC_ASSET_VERSION = "showcase-dashboard-1"
 
 
-class CacheControlMiddleware(BaseHTTPMiddleware):
-    """Prevent stale HTML/JS after UI changes; allow short caching for binary assets."""
+class CacheControlMiddleware:
+    """Add cache headers without buffering long-lived streaming responses."""
 
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        path = request.url.path or ""
-        if path in {"/", "/memory"} or path.endswith(".html"):
-            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-            response.headers["Pragma"] = "no-cache"
-        elif path.startswith("/static/"):
-            if path.endswith((".js", ".css", ".html", ".map")):
-                response.headers["Cache-Control"] = "no-cache, must-revalidate"
-            else:
-                response.headers["Cache-Control"] = "public, max-age=86400"
-        return response
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path") or ""
+
+        async def send_with_cache(message):
+            if message.get("type") == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if path in {"/", "/memory"} or path.endswith(".html"):
+                    headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    headers["Pragma"] = "no-cache"
+                elif path.startswith("/static/"):
+                    if path.endswith((".js", ".css", ".html", ".map")):
+                        headers["Cache-Control"] = "no-cache, must-revalidate"
+                    else:
+                        headers["Cache-Control"] = "public, max-age=86400"
+            await send(message)
+
+        await self.app(scope, receive, send_with_cache)
 
 
 app.add_middleware(CacheControlMiddleware)
@@ -270,6 +283,7 @@ async def clear_flash_session(session_id: str):
         "status": "success",
         "messages_removed": cleared.get("messages_removed", 0),
         "hot_memories_removed": cleared.get("memories_removed", 0),
+        "attachments_removed": cleared.get("attachments_removed", 0),
     }
 
 
@@ -327,17 +341,24 @@ async def observer_stream(run_id: str, request: Request, after: int = 0):
     async def generate():
         sequence = max(0, int(after))
         idle = 0
+        seen_event = False
         while not await request.is_disconnected():
             events = observer.events(run_id, sequence)
             if events:
                 idle = 0
+                seen_event = True
                 for event in events:
                     sequence = max(sequence, int(event["sequence"]))
                     yield f"id: {sequence}\nevent: observation\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if any(event.get("phase") == "request" and event.get("status") in {"completed", "failed"}
+                       for event in events):
+                    return
             else:
                 idle += 1
                 if idle % 30 == 0:
                     yield f"event: heartbeat\ndata: {json.dumps({'run_id': run_id, 'sequence': sequence})}\n\n"
+                if (not seen_event and idle >= 40) or (seen_event and idle >= 120):
+                    return
             await asyncio.sleep(0.25)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
@@ -365,10 +386,12 @@ async def stop_server():
 async def get_artifacts_graph():
     """Return nodes and edges for Obsidian-inspired 3D artifact visualization."""
     try:
-        from db_service import document_db
-        store = getattr(document_db, "_store", None)
-        if not store:
-            return {"status": "success", "nodes": [], "edges": [], "summary": {"total_nodes": 0, "total_edges": 0}}
+        # The graph reads only canonical manifests. Importing db_service here
+        # would construct SageDocumentDB and eagerly load BGE-M3 just to draw
+        # metadata nodes after a chat response.
+        from sage_document_db.artifact_store import ArtifactStore
+        from sage_document_db.config import ARTIFACTS_ROOT
+        store = ArtifactStore(ARTIFACTS_ROOT)
 
         doc_ids = store.list_doc_ids()
         nodes = []
@@ -655,6 +678,7 @@ async def _prepare_chat_request(
                 continue
 
             ref_id = f"file_{idx}"
+            attachment_id = f"att_{uuid.uuid4().hex}"
             safe_filename = Path(file_item.filename).name
             save_path = req_temp_dir / safe_filename
 
@@ -662,6 +686,15 @@ async def _prepare_chat_request(
             file_size = await _save_uploaded_file(file_item, save_path)
             suffix = Path(safe_filename).suffix.lstrip(".").lower()
             direct_ready = suffix in (direct_types or set())
+
+            # Keep every uploaded source addressable for later turns in this
+            # chat.  Document artifacts may be content-deduplicated elsewhere;
+            # this path is the chat-scoped attachment instance.
+            safe_chat_dir = re.sub(r"[^a-zA-Z0-9_-]", "_", final_chat_id)[:96] or "chat"
+            attachment_dir = config.ATTACHMENTS_ROOT / safe_chat_dir / attachment_id
+            attachment_dir.mkdir(parents=True, exist_ok=True)
+            durable_path = attachment_dir / safe_filename
+            shutil.copy2(save_path, durable_path)
 
             # Ingest into SageDocumentDB
             doc_id = None
@@ -713,15 +746,17 @@ async def _prepare_chat_request(
                         img_id = "img_000001"
 
                 file_entry = {
+                    "attachment_id": attachment_id,
                     "ref": ref_id,
                     "doc_id": doc_id,
                     "name": safe_filename,
                     "type": suffix,
                     "size": file_size,
-                    "path": str(save_path),
+                    "path": str(durable_path),
                     "status": "ready" if direct_ready else "ingested",
                 }
                 att_manifest_entry = {
+                    "attachment_id": attachment_id,
                     "ref": ref_id,
                     "doc_id": doc_id,
                     "name": safe_filename,
@@ -737,16 +772,18 @@ async def _prepare_chat_request(
             else:
                 # Ingestion failed - do NOT fabricate or register a ghost doc_id!
                 file_entry = {
+                    "attachment_id": attachment_id,
                     "ref": ref_id,
                     "doc_id": None,
                     "name": safe_filename,
                     "type": suffix,
                     "size": file_size,
-                    "path": str(save_path),
+                    "path": str(durable_path),
                     "status": "ingestion_failed",
                     "error": ingest_error or "Document DB ingestion failed",
                 }
                 attachments_manifest.append({
+                    "attachment_id": attachment_id,
                     "ref": ref_id,
                     "doc_id": None,
                     "name": safe_filename,
@@ -814,6 +851,7 @@ async def flash_endpoint(
     observer_run_id: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
     save_history: Optional[str] = Form(None),
+    interaction_mode: Optional[str] = Form(None),
 ):
     """Run the host-agnostic Flash graph while leaving legacy chat untouched."""
     if not objective or not objective.strip():
@@ -821,7 +859,7 @@ async def flash_endpoint(
     request_started = time.perf_counter()
     direct_types = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "txt", "md", "csv", "json", "log", "py", "js", "html", "xml", "yaml", "yml"}
     run_state, attachments_manifest, file_map = await _prepare_chat_request(
-        objective, files, direct_types=direct_types
+        objective, files, direct_types=direct_types, chat_id=session_id
     )
     intake_seconds = time.perf_counter() - request_started
     persist = True
@@ -833,6 +871,9 @@ async def flash_endpoint(
             temp_value = max(0.0, min(2.0, float(temperature)))
         except (TypeError, ValueError):
             temp_value = None
+    mode_value = str(interaction_mode or "flash").strip().lower()
+    if mode_value not in {"flash", "deep_focus"}:
+        mode_value = "flash"
     from starlette.concurrency import run_in_threadpool
     from flash.service import flash_service
     try:
@@ -846,6 +887,7 @@ async def flash_endpoint(
             user_id=config.DEFAULT_USER_ID,
             temperature=temp_value,
             save_history=persist,
+            interaction_mode=mode_value,
         )
         if run_state.registered_documents:
             result["registered_documents"] = [
@@ -1340,7 +1382,7 @@ def _html_with_asset_version(path: Path) -> Response:
     text = path.read_text(encoding="utf-8")
     # Keep any existing ?v=… markers in sync with the server version.
     text = re.sub(
-        r'(/static/(?:app\.js|style\.css|artifact_graph\.js))(?:\?v=[^"\']*)?',
+        r'(/static/(?:app\.js|style\.css|artifact_graph\.js|showcase/showcase\.(?:js|css)))(?:\?v=[^"\']*)?',
         rf'\1?v={STATIC_ASSET_VERSION}',
         text,
     )
@@ -1356,10 +1398,19 @@ def _html_with_asset_version(path: Path) -> Response:
 
 @app.get("/")
 async def index():
-    index_file = config.STATIC_DIR / "index.html"
+    index_file = config.STATIC_DIR / "showcase" / "index.html"
     if index_file.exists():
         return _html_with_asset_version(index_file)
     return JSONResponse({"message": "SAGE Backend is running. Static files pending."})
+
+
+@app.get("/legacy")
+async def legacy_index():
+    """Keep the full original workspace available while the show-off dashboard is the default."""
+    index_file = config.STATIC_DIR / "index.html"
+    if index_file.exists():
+        return _html_with_asset_version(index_file)
+    return JSONResponse({"message": "Legacy workspace unavailable."}, status_code=404)
 
 
 @app.get("/memory")

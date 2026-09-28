@@ -165,6 +165,36 @@ class SageMemory:
                 """
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attachments (
+                    attachment_id TEXT PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    message_id TEXT,
+                    turn_number INTEGER NOT NULL,
+                    ref TEXT,
+                    doc_id TEXT,
+                    image_id TEXT,
+                    name TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    storage_path TEXT,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    vision_evidence TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_attachments_chat_turn
+                ON attachments(chat_id, turn_number DESC, created_at DESC);
+                """
+            )
+
             # Phase 2 & Phase 7: Global facts / durable memories table
             conn.execute(
                 """
@@ -260,6 +290,36 @@ class SageMemory:
                     """
                     CREATE INDEX IF NOT EXISTS idx_messages_chat
                     ON messages(chat_id, created_at);
+                    """
+                )
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS attachments (
+                        attachment_id TEXT PRIMARY KEY,
+                        chat_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        message_id TEXT,
+                        turn_number INTEGER NOT NULL,
+                        ref TEXT,
+                        doc_id TEXT,
+                        image_id TEXT,
+                        name TEXT NOT NULL,
+                        media_type TEXT NOT NULL,
+                        file_size BIGINT NOT NULL DEFAULT 0,
+                        storage_path TEXT,
+                        status TEXT NOT NULL,
+                        error TEXT,
+                        vision_evidence TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_attachments_chat_turn
+                    ON attachments(chat_id, turn_number DESC, created_at DESC);
                     """
                 )
 
@@ -577,10 +637,208 @@ class SageMemory:
             conn.close()
         return results
 
+    def register_attachments(
+        self,
+        *,
+        chat_id: str,
+        user_id: str,
+        attachments: List[Dict[str, Any]],
+        message_id: Optional[str] = None,
+        turn_number: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Persist chat-scoped attachment instances without exposing paths to models."""
+        if not chat_id or not attachments:
+            return []
+        backend = get_backend_type()
+        conn = self._get_connection()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        stored: List[Dict[str, Any]] = []
+        try:
+            if turn_number is None:
+                if backend == "sqlite":
+                    row = conn.execute(
+                        "SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND role = 'user';",
+                        (chat_id,),
+                    ).fetchone()
+                    resolved_turn = int(row["n"] or 0) + 1
+                else:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM messages WHERE chat_id = %s AND role = 'user';",
+                            (chat_id,),
+                        )
+                        resolved_turn = int(cur.fetchone()[0] or 0) + 1
+            else:
+                resolved_turn = max(1, int(turn_number))
+
+            for item in attachments:
+                attachment_id = str(item.get("attachment_id") or f"att_{uuid.uuid4().hex}")
+                values = {
+                    "attachment_id": attachment_id,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "message_id": message_id,
+                    "turn_number": resolved_turn,
+                    "ref": str(item.get("ref") or ""),
+                    "doc_id": str(item.get("doc_id") or "") or None,
+                    "image_id": str(item.get("image_id") or "") or None,
+                    "name": str(item.get("name") or attachment_id),
+                    "media_type": str(item.get("type") or "unknown").lower(),
+                    "file_size": max(0, int(item.get("size") or 0)),
+                    "storage_path": str(item.get("path") or "") or None,
+                    "status": str(item.get("status") or "ready"),
+                    "error": str(item.get("error") or "") or None,
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                if backend == "sqlite":
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO attachments (
+                                attachment_id, chat_id, user_id, message_id, turn_number, ref,
+                                doc_id, image_id, name, media_type, file_size, storage_path,
+                                status, error, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(attachment_id) DO UPDATE SET
+                                message_id=excluded.message_id, status=excluded.status,
+                                error=excluded.error, updated_at=excluded.updated_at;
+                            """,
+                            tuple(values[key] for key in (
+                                "attachment_id", "chat_id", "user_id", "message_id", "turn_number", "ref",
+                                "doc_id", "image_id", "name", "media_type", "file_size", "storage_path",
+                                "status", "error", "created_at", "updated_at",
+                            )),
+                        )
+                else:
+                    with conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                INSERT INTO attachments (
+                                    attachment_id, chat_id, user_id, message_id, turn_number, ref,
+                                    doc_id, image_id, name, media_type, file_size, storage_path,
+                                    status, error, created_at, updated_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT(attachment_id) DO UPDATE SET
+                                    message_id=EXCLUDED.message_id, status=EXCLUDED.status,
+                                    error=EXCLUDED.error, updated_at=EXCLUDED.updated_at;
+                                """,
+                                tuple(values[key] for key in (
+                                    "attachment_id", "chat_id", "user_id", "message_id", "turn_number", "ref",
+                                    "doc_id", "image_id", "name", "media_type", "file_size", "storage_path",
+                                    "status", "error", "created_at", "updated_at",
+                                )),
+                            )
+                stored.append(values)
+        finally:
+            conn.close()
+        return stored
+
+    def list_attachments(self, chat_id: str, user_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """List attachment instances for exactly one chat, newest first."""
+        if not chat_id:
+            return []
+        limit = max(1, min(int(limit or 100), 500))
+        backend = get_backend_type()
+        conn = self._get_connection()
+        results: List[Dict[str, Any]] = []
+        columns = (
+            "attachment_id", "chat_id", "user_id", "message_id", "turn_number", "ref",
+            "doc_id", "image_id", "name", "media_type", "file_size", "storage_path",
+            "status", "error", "vision_evidence", "created_at", "updated_at",
+        )
+        try:
+            if backend == "sqlite":
+                sql = "SELECT * FROM attachments WHERE chat_id = ?"
+                params: List[Any] = [chat_id]
+                if user_id:
+                    sql += " AND user_id = ?"
+                    params.append(user_id)
+                sql += " ORDER BY turn_number DESC, created_at DESC LIMIT ?;"
+                params.append(limit)
+                for row in conn.execute(sql, tuple(params)).fetchall():
+                    results.append({key: row[key] for key in columns})
+            else:
+                import psycopg2.extras
+                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                    sql = "SELECT * FROM attachments WHERE chat_id = %s"
+                    params = [chat_id]
+                    if user_id:
+                        sql += " AND user_id = %s"
+                        params.append(user_id)
+                    sql += " ORDER BY turn_number DESC, created_at DESC LIMIT %s;"
+                    params.append(limit)
+                    cur.execute(sql, tuple(params))
+                    for row in cur.fetchall():
+                        results.append({key: row[key] for key in columns})
+        finally:
+            conn.close()
+        return results
+
+    def update_attachment_evidence(self, attachment_ids: List[str], evidence: str) -> int:
+        """Attach grounded visual evidence to existing attachment instances."""
+        ids = [str(value) for value in attachment_ids if str(value or "").strip()]
+        if not ids or not str(evidence or "").strip():
+            return 0
+        backend = get_backend_type()
+        conn = self._get_connection()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        updated = 0
+        try:
+            if backend == "sqlite":
+                marks = ",".join("?" for _ in ids)
+                with conn:
+                    cur = conn.execute(
+                        f"UPDATE attachments SET vision_evidence = ?, updated_at = ? WHERE attachment_id IN ({marks});",
+                        (str(evidence).strip(), now_iso, *ids),
+                    )
+                    updated = int(cur.rowcount or 0)
+            else:
+                with conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE attachments SET vision_evidence = %s, updated_at = %s WHERE attachment_id = ANY(%s);",
+                            (str(evidence).strip(), now_iso, ids),
+                        )
+                        updated = int(cur.rowcount or 0)
+        finally:
+            conn.close()
+        return updated
+
+    def link_attachments_to_message(self, attachment_ids: List[str], message_id: Optional[str]) -> int:
+        """Link already-registered attachments to the committed user message."""
+        ids = [str(value) for value in attachment_ids if str(value or "").strip()]
+        if not ids or not message_id:
+            return 0
+        backend = get_backend_type()
+        conn = self._get_connection()
+        updated = 0
+        try:
+            if backend == "sqlite":
+                marks = ",".join("?" for _ in ids)
+                with conn:
+                    cur = conn.execute(
+                        f"UPDATE attachments SET message_id = ?, updated_at = ? WHERE attachment_id IN ({marks});",
+                        (str(message_id), datetime.now(timezone.utc).isoformat(), *ids),
+                    )
+                    updated = int(cur.rowcount or 0)
+            else:
+                with conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE attachments SET message_id = %s, updated_at = now() WHERE attachment_id = ANY(%s);",
+                            (str(message_id), ids),
+                        )
+                        updated = int(cur.rowcount or 0)
+        finally:
+            conn.close()
+        return updated
+
     def clear_chat(self, chat_id: str, user_id: Optional[str] = None) -> Dict[str, int]:
         """Delete canonical messages and every chat-scoped memory for one chat."""
         if not chat_id:
-            return {"messages_removed": 0, "memories_removed": 0}
+            return {"messages_removed": 0, "memories_removed": 0, "attachments_removed": 0}
         # Capture derived-index IDs before the canonical rows disappear.
         indexed_memories = self.list_memories(
             user_id=user_id or config.DEFAULT_USER_ID,
@@ -592,6 +850,7 @@ class SageMemory:
         conn = self._get_connection()
         messages_removed = 0
         memories_removed = 0
+        attachments_removed = 0
         try:
             if backend == "sqlite":
                 with conn:
@@ -623,6 +882,14 @@ class SageMemory:
                             (chat_id,),
                         )
                     memories_removed = int(cur.rowcount or 0)
+                    if user_id:
+                        cur = conn.execute(
+                            "DELETE FROM attachments WHERE chat_id = ? AND user_id = ?;",
+                            (chat_id, user_id),
+                        )
+                    else:
+                        cur = conn.execute("DELETE FROM attachments WHERE chat_id = ?;", (chat_id,))
+                    attachments_removed = int(cur.rowcount or 0)
             else:
                 with conn:
                     with conn.cursor() as cur:
@@ -654,6 +921,14 @@ class SageMemory:
                                 (chat_id,),
                             )
                         memories_removed = int(cur.rowcount or 0)
+                        if user_id:
+                            cur.execute(
+                                "DELETE FROM attachments WHERE chat_id = %s AND user_id = %s;",
+                                (chat_id, user_id),
+                            )
+                        else:
+                            cur.execute("DELETE FROM attachments WHERE chat_id = %s;", (chat_id,))
+                        attachments_removed = int(cur.rowcount or 0)
         finally:
             conn.close()
         for memory in indexed_memories:
@@ -664,6 +939,7 @@ class SageMemory:
         return {
             "messages_removed": messages_removed,
             "memories_removed": memories_removed,
+            "attachments_removed": attachments_removed,
         }
 
     # ── Phase 2 & Phase 7: Global Facts / Durable Memory Operations ─────────

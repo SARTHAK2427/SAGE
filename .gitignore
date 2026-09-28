@@ -87,3 +87,6 @@ scratch/
 
 # Local architecture notes, handoffs, and implementation plans
 /notes/
+
+# Local real-world prompt evaluation material (documents/images may be private or large)
+/test_materials/

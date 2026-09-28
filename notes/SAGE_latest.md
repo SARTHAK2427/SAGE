@@ -1,403 +1,396 @@
-﻿# SAGE — Complete Project Reference
+# SAGE — Current Architecture Reference
 
-> **Last updated:** September 2026 (from USB snapshot)
+> **Last updated:** 28 September 2026
 >
-> This file is the canonical, single-source reference for anyone (human or AI) trying to understand
-> or continue work on the full merged SAGE system. It covers architecture, components, schemas,
-> model pipeline, known issues, and development status.
+> This is the local handoff for the current SAGE implementation. It supersedes
+> earlier descriptions of a single, hot-swapped model agent. The legacy agent
+> remains in the repository, but the browser UI's default chat path is now
+> **SAGE Flash**.
 
 ---
 
-## 1. What Is SAGE?
+## 1. System purpose and active modes
 
-SAGE is a **local, multi-capability AI agent** designed to run entirely on a single developer machine
-(or optionally offload heavy inference to a remote Kaggle GPU). It is not a typical chatbot or simple
-RAG pipeline. The core design principle is:
+SAGE is a local-first FastAPI application with a browser UI, durable chat
+ledger, scoped memory, document RAG, optional image inspection, and a
+host-agnostic inference runtime.
 
-> **Gemma 4B is the sole semantic controller. Every deterministic capability (documents, code
-> execution, vision, math) is an external tool that Gemma explicitly calls by name.**
+### Active browser mode: Flash
 
-```
-User prompt
-    |
-    v
-FastAPI (app.py)     <- upload handling, streaming, RunState tracking
-    |
-    v
-Orchestrator (orchestrator.py)    <- history management, JSON parsing, loop control
-    |
-    v
-Gemma 4B (via llama.cpp server)   <- semantic reasoning, tool call decisions
-    |  (emits JSON: {"type": "tool_calls", "calls": [...]})
-    v
-Generic Tool Dispatcher (core/dispatcher.py)
-    |        |         |          |
-    v        v         v          v
-SAGE DB   Vision    Coder      Math
-(Chroma+  (Qwen3-   (Qwen2.5-  (AST
-MiniLM)   VL 4B)    Coder 7B   calculator)
-                    + Docker)
-```
+Flash is the shipped/default chat path (`POST /api/flash`). It is designed to
+work with either:
 
----
+- a local RTX 4060-class machine (Gemma and Qwen on GPU; memory curator on
+  CPU/RAM), or
+- remote OpenAI-compatible GPU bridges such as a Kaggle/cloudflared bridge,
+  private server, or another machine.
 
-## 2. File & Directory Layout
+The browser never needs to know whether inference is local or remote. Runtime
+bindings, URLs, API keys, and model IDs are set in the Flash Runtime UI and
+exist only for the current SAGE server session. They are never written to
+`.env`, the database, or browser persistence.
 
-```
-SAGE/
-|-- app.py                      # FastAPI server, /api/chat, /api/chat/stream, /api/upload
-|-- config.py                   # All paths, ports, model configs, env-var overrides
-|-- db_service.py               # Process-level SageDocumentDB singleton
-|-- manual_db_test.py           # Standalone CLI test harness for the DB
-|-- model_client.py             # HTTP client for llama.cpp REST API
-|-- model_manager.py            # Sequential model lifecycle (load/unload GGUF models)
-|-- orchestrator.py             # Main agent loop, JSON repair, history, dispatcher wiring
-|-- requirements.txt            # Unified Python dependencies
-|-- .env / .env.example         # Runtime secrets and overrides (never committed)
-|
-|-- core/
-|   |-- dispatcher.py           # ToolRegistry, ToolResult, latency tracking, error wrapping
-|   |-- json_repair.py          # Robust JSON cleanup and corrective retry prompt
-|   |-- model_runtime_cache.py  # Per-model request caching and request-ID tracking
-|   |-- remote_model_transport.py # HTTP bridge to remote Kaggle GPU
-|   |-- run_state.py            # RunState, RegisteredDocument tracking per request
-|   `-- sockets.py              # ALL deterministic socket builder functions (FROZEN)
-|
-|-- tools/
-|   |-- registry.py             # Central factory wiring all tool adapters
-|   |-- document_database.py    # RAG, exact search, fetch, list adapters
-|   |-- vision.py               # Qwen3-VL targeted image inspection adapter
-|   |-- coder.py                # Qwen-Coder + Docker sandbox adapter
-|   |-- math_tool.py            # Safe AST arithmetic evaluator
-|   `-- general_knowledge.py    # General-purpose knowledge placeholder
-|
-|-- sage_document_db/           # CANONICAL DOCUMENT DATABASE PACKAGE
-|   |-- __init__.py             # SageDocumentDB facade (public API)
-|   |-- models.py               # NormalizedDocument, NormalizedElement, RagResult, etc.
-|   |-- artifact_store.py       # Filesystem: manifest, text, images, tables, code
-|   |-- chroma_store.py         # Chroma vector DB (sage_source + sage_derived)
-|   |-- chunker.py              # Structure-aware chunking (token-aware, context-tagged)
-|   |-- config.py               # DB-specific paths and CUDA/CPU auto-detect
-|   |-- derived.py              # Vision model output persistence hook
-|   |-- docling_parser.py       # IBM Docling: heavy PDF/DOCX/PPTX structure parsing
-|   |-- embeddings.py           # all-MiniLM-L6-v2 embedding service (CUDA/CPU fallback)
-|   |-- exact_search.py         # Literal and regex search across canonical artifacts
-|   |-- pipeline.py             # Ingestion orchestration pipeline
-|   |-- router.py               # File extension -> parser routing
-|   |-- simple_parsers.py       # Fast parsers for TXT, MD, CSV, JSON, images
-|   `-- utils.py                # sha256, iso_now, safe_mkdir helpers
-|
-|-- code_executor/              # Docker sandbox pipeline
-|   |-- pipeline.py             # Main: generate -> execute -> repair loop
-|   |-- sandbox.py              # Docker container management
-|   |-- extractor.py            # Code block extraction from LLM output
-|   `-- fixer.py                # Error-driven repair prompt generation
-|
-|-- prompts/                    # FROZEN - do not edit before Stage 3
-|   |-- agent_system.txt        # Gemma system prompt
-|   |-- tools.json              # Tool signatures Gemma sees
-|   `-- abilities.json          # Delegation boundaries
-|
-|-- schemas/deterministic/      # 25 frozen socket JSON schemas (NEVER MODIFY)
-|-- static/                     # Frontend HTML/CSS/JS
-|-- temp/                       # Per-request temp files (auto-created, auto-cleaned)
-|-- artifacts/                  # Canonical document artifacts (not committed to git)
-|-- chroma_db/                  # Chroma vector index (not committed to git)
-`-- tests/                      # Full test suite (mock mode, no GPU/Docker required)
-```
+### Placeholder browser mode: Reasoning
+
+The composer exposes a Reasoning switch as a deliberate "coming soon" surface.
+It is not wired as a second inference graph. Gemma Flash itself currently has
+its catalog reasoning mode enabled; this is a runtime generation setting, not
+the separate future UI mode.
+
+### Legacy mode
+
+`/api/chat`, `orchestrator.py`, the dispatcher, and the old sequential
+model-manager/tool loop are retained for compatibility. They are not the
+architecture to extend for Flash features unless explicitly required.
 
 ---
 
-## 3. Model Pipeline
+## 2. High-level Flash flow
 
-SAGE runs all models via llama-server.exe REST API. Only ONE model is in VRAM at a time.
+```
+Browser composer
+  ├─ creates a browser-side observer run id
+  ├─ opens SSE: /api/observer/stream/{run_id}
+  └─ POST /api/flash (prompt, attachments, chat id, run id)
+          |
+          v
+FastAPI intake (app.py)
+  ├─ validates/stages uploads
+  ├─ ingests non-direct documents into the document database
+  └─ runs FlashService in a worker thread
+          |
+          v
+FlashService (flash/service.py)
+  ├─ reads recent turns, current-chat cold memory, and global personal memory
+  ├─ loads the current chat's attachments and resolves attachment proximity
+  ├─ sends fixed system/abilities, callable actions, JSON context, then latest message
+  ├─ Gemma returns a final response or one typed action request
+  ├─ action results/errors return in the next JSON context packet
+  ├─ Qwen inspects chat images or a selected embedded document image
+  ├─ commits the completed turn to the canonical SQLite ledger
+  └─ queues memory curation/indexing asynchronously
+          |
+          v
+ObserverStore → SSE → compact progress panel + full Execution Inspector
+```
 
-### Models
+### Flash action protocol
 
-| Key | Name | Role | ~VRAM |
-|-----|------|------|-------|
-| agent | Gemma 4B Instruct Q4_K_M | Semantic controller - sole decision maker | 3.5 GB |
-| coder | Qwen2.5-Coder 7B Instruct Q4_K_M | Code generation specialist | 5 GB |
-| document_analyzer | Qwen3-VL 4B Instruct Q4_K_M + mmproj | Vision/OCR specialist | 3.5 GB |
-| final_synthesizer | Qwen3.5 2B Instruct Q4_K_M | Final answer synthesis | 2 GB |
+The model sees no A/B/C/D labels. It returns either:
 
-Target GPU: RTX 4060 (8 GB VRAM). Models are hot-swapped via SIGTERM + relaunch.
+- `final=true` with the user-facing response, or
+- `final=false` with one typed action request.
 
-### Local vs Remote Inference
+Available actions are `chat_ledger.search`, `document.search`,
+`document.image.inspect`, and `vision.inspect`. Global personal memory,
+current-chat cold memory, and recent conversation are already supplied to
+Gemma; the active Flash graph has no global/cold memory-search action.
 
-- SAGE_MODEL_BACKEND=local  -> llama-server.exe on local machine (default)
-- SAGE_MODEL_BACKEND=remote -> HTTP to Kaggle GPU worker via ngrok tunnel
+The system message contains only action contracts callable on that turn. The
+JSON context repeats availability and allowed attachment IDs. This avoids
+advertising an unavailable action and relying on a small controller model to
+resolve contradictory instructions.
 
-Remote transport: core/remote_model_transport.py
-API key: SAGE_REMOTE_GPU_API_KEY environment variable
+Unavailable, invalid, repeated, or failed actions return structured results to
+Gemma for recovery. They do not become user-visible Python errors. Document
+search is always constrained to document IDs registered to the current chat.
 
 ---
 
-## 4. SAGE Document Database (sage_document_db)
+## 3. Inference runtime
 
-The permanent source-of-truth storage layer.
+### Roles
 
-### Core Philosophy
+| Role | Default responsibility | Binding options |
+|---|---|---|
+| `gemma` | routing, direct answers, synthesis; catalog reasoning enabled | local GPU or remote bridge |
+| `qwen` | same-chat image and embedded document-image inspection | local GPU or remote bridge |
+| `memory` | 2B memory curation/compression | local CPU, local GPU, remote bridge, or disabled |
 
-```
-CHROMA:    WHERE is relevant content likely to be? (fuzzy, disposable, rebuildable)
-ARTIFACTS: WHAT EXACTLY was in the source?        (canonical, permanent, never modified)
-```
+`flash/runtime_config.py` owns ephemeral role bindings. `flash/transport.py`
+provides connection pooling, API-key headers, retries, model-ID probing, and
+OpenAI-compatible `/v1/chat/completions` calls. It forces IPv4 for tunnel
+reliability and keeps TLS clients alive per origin.
 
-Deleting chroma_db/ loses NOTHING. Rebuild from artifacts/ with one command.
+`flash/local_manager.py` launches/reconciles local llama-server processes when
+a role is bound locally. Remote bridge deployment is supported through the
+runtime UI, but SAGE does not assume a specific provider or tunnel.
 
-### Supported File Types
+### Runtime diagnostics behaviour
 
-| Extension | Parser |
-|-----------|--------|
-| .pdf .docx .pptx .xlsx | IBM Docling (layout-aware) |
-| .txt .md | Simple text parser |
-| .json | Simple JSON parser |
-| .csv | Simple CSV parser |
-| .png .jpg .jpeg .webp | Simple image parser |
-
-### On-Disk Artifact Layout
-
-```
-artifacts/
-`-- doc_<sha10>/
-    |-- manifest.json          # Master index
-    |-- text/
-    |   |-- page_0001.json     # Text elements, paginated (PDF/PPTX)
-    |   `-- document.json      # Single-file (TXT/MD/JSON/CSV)
-    |-- images/
-    |   `-- img_000001.png     # Extracted binary images
-    |-- tables/
-    |   `-- table_000001.json  # Structured rows + markdown
-    `-- derived/
-        `-- vision/
-            `-- img_000001.json  # Vision model analysis history (append-only)
-```
-
-### Public API (SageDocumentDB)
-
-```python
-db = SageDocumentDB()
-
-db.ingest_document("file.pdf", index_in_chroma=True, debug=True)
-# -> {"doc_id", "artifact_dir", "counts", "index", "warnings"}
-
-db.rag_search("query", top_k=5, doc_ids=None)
-# -> list[RagResult]
-
-db.exact_search("AUTH_V2", regex=True, case_sensitive=False)
-# -> list[ExactSearchResult]
-
-db.artifact_fetch("doc_27d0685bb3", "img_000001")
-# -> dict: {id, type, page, local_path, exists} (image)
-# -> dict: {id, type, text, page} (text)
-# -> dict: {id, type, rows, markdown} (table)
-
-db.list_doc_ids()
-# -> list[str]
-
-db.add_image_analysis("doc_id", "img_000001", model="qwen3-vl",
-    task_type="ocr", raw_output="...", description="...", ocr_text="...")
-# -> DerivedInsertResult
-
-db.rebuild_all_indexes()
-# -> {"source": {...}, "derived": {...}}
-```
-
-### Chroma Collections
-
-| Collection | Record ID Format | Purpose |
-|-----------|-----------------|---------|
-| sage_source | {doc_id}:chunk:{N:06d} | Canonical text chunks, 384-dim MiniLM |
-| sage_derived | {doc_id}:derived:image:{image_id} | Vision model analysis text (separate!) |
+Applying a remote runtime is normally quick: configure bindings, then warm
+connections in a daemon thread. “Test connection” is deliberately heavier: it
+probes **Gemma, Qwen, then Memory sequentially**, querying `/v1/models` and
+making a tiny completion for each enabled role. Slow or unavailable tunnels
+therefore accumulate delays. This is a known UX/performance limitation, not
+evidence that the remote models are running on the user's laptop.
 
 ---
 
-## 5. Agent Reasoning Loop
+## 4. Context and memory currently implemented
+
+### Canonical ledger
+
+`sage_memory.py` stores every persisted turn in SQLite. It is the literal,
+chat-scoped conversation record and carries sequence/time metadata. It is not
+discarded merely because a turn leaves recent context.
+
+### Hot/recent context
+
+`memory_system/coordinator.py` reads recent turns subject to both:
+
+- a turn cap (`SAGE_RECENT_CHAT_MAX_TURNS`, currently 5), and
+- a token budget (`SAGE_RECENT_CHAT_BUDGET_TOKENS`, currently 2400).
+
+The budget prevents five extremely large pairs from consuming the whole model
+context. Flash normally gives this recent context to Gemma directly.
+
+### Durable personal memory (global)
+
+Global memory is deliberately narrow. It stores only stable **personal
+information** such as a name or age, scoped to the user rather than a chat.
+It is injected as authoritative known user information into Gemma's system
+context for every chat, without needing a BGE search. Identity normalization
+and deduplication live in `memory_system/global_identity.py`; old values can
+be superseded and duplicates are soft-deleted.
+
+Do not use global memory for preferences, generic facts, project details, or
+chat events. Those are chat-scoped memory.
+
+### Cold/chat memory and curation
+
+`flash/memory_worker.py` performs 2B curation in background jobs after a
+conversation commit. It can create compressed chat memories and extract
+eligible personal facts. `memory_system/job_store.py` persists job state;
+`memory_system/index_outbox.py` ensures vector-index operations can recover
+after restart.
+
+The completed user reply is not blocked on curation. The observer records
+queued, started, model-input, model-output, and stored/failed phases.
+
+### Retrieval
+
+Global personal memory, bounded current-chat cold memory, and bounded recent
+conversation are pre-fed in the JSON context on every Flash turn. Gemma does
+not call a memory search tool for them. `chat_ledger.search` remains available
+only for explicit older-history requests that cannot be answered by the recent
+window, such as a date, an earlier-message count, or an old topic. Ordinary
+greetings and general questions do not run BGE retrieval.
+
+Memory indexing is decoupled from the response path.
+`memory_system/index_worker.py` processes the durable index outbox in a
+separate low-priority process, preventing a cold BGE load from delaying the
+next chat request.
+
+### Planned, not yet implemented
+
+`notes/New_memory system.md` contains the next-generation proposal: bounded
+global/cold buckets, Smart Memory Compression at capacity, ten-or-token-budget
+hot context, a complete SQL message ledger, cross-chat RAG with provenance,
+and artifact-aware retrieval. It is design work, not current runtime
+behaviour. Do not describe it as implemented.
+
+---
+
+## 5. Document RAG and attachments
+
+### Data model
+
+`sage_document_db/` is the document subsystem. Its canonical artifacts and
+rebuildable vector index live under one generated data root:
 
 ```
-User message arrives
-    |
-    v
-[app.py] _prepare_chat_request()
-    - Registers uploaded files as RegisteredDocuments in RunState
-    - Initializes RunState for this request
-    |
-    v
-[orchestrator.run()] up to MAX_AGENT_LOOPS=8:
-
-    Loop N:
-    |-- Build Gemma prompt: system_prompt + history + tool_results (if N > 1)
-    |-- Call Gemma via model_client / remote_model_transport
-    |-- json_repair.py: strip <think> tags, extract JSON, one-shot repair if malformed
-    |-- Parse response:
-    |       {"type": "tool_calls", "calls": [...]}
-    |    or {"type": "final", "answer": "..."}
-    |
-    |-- If tool_calls:
-    |       dispatcher.dispatch_all(calls)
-    |           |-- document_database: rag/exact/fetch/list
-    |           |-- vision: resolve image -> Qwen3-VL -> save derived result
-    |           |-- coder: Qwen-Coder -> Docker execute -> repair if failed
-    |           `-- math: safe AST eval
-    |       Each tool returns rich socket dict
-    |       Socket-to-plug mapper strips internal fields -> compact Gemma result
-    |       Append to history as {"type": "tool_results", "results": [...]}
-    |
-    `-- If final:
-            Return answer to user
+data/
+├─ attachments/            # durable chat attachment instances
+├─ documents/
+│  ├─ artifacts/          # source-derived canonical document artifacts
+│  └─ chroma_bge_m3/      # disposable document vector index
+└─ memory/
+   ├─ sage_memory.db      # conversation ledger + memory jobs
+   └─ chroma/             # memory vector index
 ```
 
+`SAGE_DATA_ROOT` changes this root; granular path overrides remain available.
+Deleting `data/` is a hard local reset. It is safe from a code-import
+perspective: directories are recreated on demand, but all local chats,
+memories, ingested source artifacts, and indexes are lost.
+
+### Document pipeline
+
+1. App intake stores an upload in a temporary request directory.
+2. Text-style files can be used directly; other documents are ingested.
+3. Docling is optional; `sage_document_db/pdf_fallback.py` uses PyMuPDF to
+   recover PDF text/tables when Docling is unavailable/fails.
+4. `Chunker` builds structure-aware chunks.
+5. BGE-M3 embeds and Chroma stores 1024-dimensional vectors.
+6. The chat attachment registry supplies an allow-list of document IDs.
+7. Gemma may request `document.search`; the action calls
+   `document_db.rag_search_socket` within that allow-list.
+8. Retrieved records return in the next JSON context packet with provenance.
+9. Gemma may request `document.image.inspect` with one document attachment ID
+   and a one-based image number. SAGE enumerates the document's canonical image
+   artifacts in reading order and sends only that child image to Qwen, with
+   its page, caption, element ID, and image-count metadata.
+
+Each upload has a durable attachment instance linked to chat, message, turn,
+timestamp, media type, processing status, and content/artifact ID. Stored
+vision evidence supports same-chat follow-ups. Any still-readable image owned
+by that same chat may be inspected again by Qwen when stored evidence is too
+shallow for a later request. Cross-chat attachments never enter the context or
+action allow-list.
+
+### Attachment reference resolution
+
+Attachments are represented as roots rather than one flat pool:
+
+- uploaded images are `chat_image` roots;
+- uploaded documents are `document` roots;
+- extracted document images are children of their owning document and are
+  addressed only through `document.image.inspect`.
+
+For unnamed references such as “this”, “it”, or “what is up with this”, SAGE
+computes `attachment_reference` before invoking Gemma. A unique attachment on
+the current message wins; otherwise the unique attachment from the nearest
+prior attachment-bearing turn wins. Attachments tied to the same relevant
+message remain explicitly ambiguous and Gemma may ask the user to choose.
+Separately uploaded screenshots are never counted as images inside a PDF.
+
+### Embeddings and performance
+
+The canonical document embedding model is `BAAI/bge-m3`, CPU by default
+(`EMBEDDING_DEVICE=cpu`) so an 8 GB GPU remains free for Flash. This is
+substantially heavier than MiniLM. First load/download, document ingestion,
+index recovery, and a fresh BGE search can saturate CPU on weaker laptops.
+Ordinary warm text chat should not invoke document RAG by default.
+
+The optional reranker is disabled by default (`SAGE_RERANKER_ENABLED=false`).
+
 ---
 
-## 6. Socket -> Plug Architecture
+## 6. Observer and UI
 
-Every internal component produces a RICH SOCKET (detailed record with timestamps, paths,
-debug data, telemetry). A MAPPER converts this to a COMPACT PLUG for Gemma.
+`core/observer.py` is an in-memory, thread-safe per-run event ledger. It
+sanitizes payloads and assigns ordered event sequences. FastAPI exposes:
 
-Gemma never sees raw internal data.
+- `GET /api/observer/runs`
+- `GET /api/observer/runs/{run_id}` (snapshot/fallback)
+- `GET /api/observer/stream/{run_id}` (SSE live stream)
 
-Example (RAG):
+`static/app.js` opens the SSE stream before it posts Flash. The normal right
+panel presents a user-friendly, top-to-bottom flow; the expanded Execution
+Inspector shows sanitized inputs, outputs, routing, timings, retrieval, and
+background memory work. Tiles are driven by real backend events, not fake UI
+timers.
+
+Local context-packet assembly remains visible in the detailed Inspector but is
+not shown as a separate compact progress tile. It normally takes only a few
+milliseconds and is not a model or retrieval task.
+
+If tiles never appear on another machine, investigate the browser's EventSource
+request, stale UI/server versions, local proxy/antivirus interference, and any
+pre-Flash document ingestion delay. SSE failure is distinct from remote model
+inference latency.
+
+---
+
+## 7. Key files
+
 ```
-Internal socket (rich):          Gemma-facing plug (compact):
-{                                {
-  record_id: "doc_x:chunk:4",     "doc": "doc_x",
-  distance: 0.23,                 "text": "...",
-  local_path: "/abs/artifacts",   "page": 1,
-  embedding: [0.12, ...384...],   "element_ids": ["txt_000005"]
-  chroma_internal: {...},        }
-  ...
-}
+app.py                         FastAPI routes, uploads, Flash endpoints, SSE
+flash/service.py               Flash graph and assembled model context
+flash/protocol.py              Three-message Gemma protocol and action parsing
+flash/actions.py               Ledger, document, document-image, and vision actions
+flash/transport.py             OpenAI-compatible local/remote transport
+flash/runtime_config.py        Ephemeral runtime role/connection configuration
+flash/local_manager.py         Local llama-server lifecycle
+flash/memory_worker.py         Background 2B curation
+memory_system/                 Ledger coordination, jobs, quality, identity, index outbox
+memory_system/index_worker.py  Separate low-priority BGE/index-outbox process
+sage_memory.py                 SQLite canonical conversation/memory store
+sage_document_db/              Artifacts, BGE RAG, chunking, PDF fallback, reranking
+core/observer.py               Execution event store
+static/app.js                  Chat, Runtime UI, Observer UI
+prompts/flash_system.txt       Gemma Flash prompt and routing contract
+prompts/qwen_flash_system.txt  Qwen visual specialist prompt
+tests/flash/                   Flash runtime/service/document tests
+tests/test_memory_system_v2.py Memory-system integration coverage
 ```
 
-All socket schemas frozen in: schemas/deterministic/*.schema.json
-All socket builders in: core/sockets.py (DO NOT MODIFY)
-
-Fields Gemma must NEVER see:
-  local_path, traceback, pid, port, embedding vectors,
-  Docker container IDs, cache file paths, raw Chroma responses
+Scripts previously scattered at repository root have been organized under
+`scripts/`; the friend's former standalone memory project is retained under
+`reference/standalone_memory/` for reference only.
 
 ---
 
-## 7. Configuration & Environment Variables
+## 8. Configuration essentials
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| SAGE_ARTIFACTS_ROOT | ./artifacts | Canonical document artifact storage |
-| SAGE_CHROMA_ROOT | ./chroma_db | Chroma vector database directory |
-| SAGE_MAX_UPLOAD_SIZE_BYTES | 52428800 | Max upload size (50MB) |
-| LLAMA_SERVER_PATH | auto-discovered | Path to llama-server.exe |
-| MODEL_DIR | auto ./models | Directory containing GGUF model files |
-| SAGE_MODEL_BACKEND | local | "local" or "remote" |
-| SAGE_REMOTE_GPU_URL | (empty) | ngrok tunnel URL for Kaggle GPU |
-| SAGE_REMOTE_GPU_API_KEY | (empty) | API key for remote GPU worker |
-| SAGE_MOCK_MODE | 0 | Set to 1 for CPU-only test mode |
-| GEMMA_CONTEXT | 16384 | Gemma context window in tokens |
+See `.env.example` for the full documented list. The main values are:
 
----
+| Variable | Purpose |
+|---|---|
+| `SAGE_DATA_ROOT` | root for all generated document/memory data |
+| `SAGE_DOCUMENT_CHROMA_ROOT` | optional BGE document index override |
+| `SAGE_MEMORY_CHROMA_ROOT` | optional memory index override |
+| `SAGE_SQLITE_PATH` | optional SQLite ledger override |
+| `SAGE_RAG_EMBEDDING_MODEL` | BGE model (default `BAAI/bge-m3`) |
+| `EMBEDDING_DEVICE` | CPU by default; CUDA is explicit opt-in |
+| `SAGE_RERANKER_ENABLED` | optional reranker, default false |
+| `SAGE_MOCK_MODE` | mock local inference for tests/dev |
+| `SAGE_MEMORY_CURATOR_*` | curation enablement and size limits |
+| `LLAMA_SERVER_PATH`, `MODEL_DIR` | local model runtime paths |
 
-## 8. Running SAGE
-
-Install dependencies:
-  pip install -r requirements.txt
-
-Run full test suite (no GPU/Docker needed):
-  set SAGE_MOCK_MODE=1
-  pytest tests/ -v
-
-Test document DB via CLI:
-  python manual_db_test.py ingest "path/to/file.pdf" --debug
-  python manual_db_test.py rag "quarterly results" --top-k 5
-  python manual_db_test.py exact "192.168.1.1"
-  python manual_db_test.py exact "AUTH_.*_V2" --regex
-  python manual_db_test.py fetch doc_27d0685bb3 img_000001
-  python manual_db_test.py rebuild-all
-
-Start web application:
-  python app.py
-  # Open: http://127.0.0.1:8899
+Remote URLs and keys are session-only Runtime UI inputs. Do not add real
+credentials to `.env.example`, prompts, test fixtures, or Git history.
 
 ---
 
-## 9. Development Status
+## 9. Validation and repository hygiene
 
-### Stage 1: Security & Code Quality Audit [COMPLETE] - 211/211 tests passing
+Focused verification for the current Flash runtime and attachment protocol:
 
-Security fixes applied:
-  SEC-01: Image reference path validation (prevent arbitrary file reads)
-  SEC-02: doc_id/image_id sanitized against path traversal
-  SEC-04: Math exponentiation bounded against CPU/DoS
-  SEC-07: request_id sanitized in ModelRuntimeCache
+```powershell
+python -m pytest tests/flash/test_runtime_config.py tests/flash/test_transport.py tests/flash/test_attachment_resolution.py -q
+```
 
-Correctness fixes applied:
-  CORR-01: .env loading order fixed
-  CORR-02: _dataclass_to_dict no longer drops similarity metrics
-  CORR-03: clean_json_string regex fixed for nested JSON
-  CORR-05: referenced_images field added to RunState
+Latest result: **15 passed**. `tests/flash/test_service.py` still contains
+assertions for the retired Case A/B/C/D and semantic-memory-request protocol;
+it must be rewritten before it can serve as a current full-Flash regression
+suite.
 
-Code quality fixes applied:
-  DUP-01: app.py upload logic deduplicated via _prepare_chat_request
-  DUP-02: run_state.py tool result recording deduplicated
-  DUP-03: coder.py LLM query helper extracted
-  DUP-04: list_doc_ids() added as facade method (additive only)
-
-Dead code removed:
-  manual_test.py (root scratch script)
-  Unused _find_blocks in code_executor/extractor.py
-  Unused self.document_system_prompt in orchestrator.py
-
-### Stage 2A: Performance Measurement [COMPLETE] (no code changes, measurement only)
-
-Key bottlenecks measured:
-
-  BOT-01: Model switching / GGUF reload     4,500-7,000 ms per switch    CRITICAL
-  BOT-02: Cold system prompt KV eval        1,587-3,000 ms on Loop 1     HIGH
-  BOT-03: HTTP client instantiation churn   ~200 ms per inference call   MEDIUM-HIGH
-  BOT-04: Context explosion across loops    +460 ms per 1,000 tokens     HIGH
-  BOT-05: temp/req_* dirs never cleaned     unbounded disk growth         HIGH
-  BOT-06: No concurrency lock on model sw.  crash if 2 users overlap      CRITICAL
-
-Proposed Stage 2B (NOT YET APPLIED):
-  OPT-01: Persistent httpx.Client pooling   -150-300 ms per call          Very Low risk
-  OPT-02: Health poll 500ms -> 100ms        -200-400 ms per switch        Very Low risk
-  OPT-03: temp/req_* cleanup background     eliminates disk exhaustion    Very Low risk
-  OPT-04: threading.Lock around ensure_model prevents crash on concurrency Low risk
-
-### Not Started Yet
-
-  Stage 2B: Apply performance optimizations
-  Stage 3:  Prompt/context audit
-  Stage 4:  High-level architecture documentation
-  Stage 5:  Low-level socket-plug interface documentation
-  Phase 17 hard stop: tools.json, abilities.json, agent_system.md (external finalization)
+`.gitignore` excludes `data/`, historical artifact/index locations, local
+databases, model weights, `.env*` (except `.env.example`), logs, and local
+notes. `notes/` is intended to remain local; files already tracked by Git must
+be explicitly untracked or reverted if they must disappear from a future
+commit.
 
 ---
 
-## 10. Files That Must NOT Be Modified
+## 10. Current known limitations / next work
 
-  schemas/deterministic/*.schema.json   - 25 frozen socket contracts
-  schemas/DETERMINISTIC_SOCKETS.md     - Authoritative contract specification
-  core/sockets.py                      - All socket builder functions
-  prompts/abilities.json               - Frozen until Stage 3
-  prompts/agent_system.txt             - Frozen until Stage 3
-  prompts/tools.json                   - Frozen until Stage 3 / Phase 17
+1. Runtime diagnostics probe roles serially; parallel, timed diagnostics would
+   be better for remote users.
+2. BGE-M3 can temporarily use most CPU during cold initialization, document
+   ingestion, or index recovery. CPU-thread limits and deferred recovery are
+   desirable before broad distribution.
+3. Observer SSE should gain a polling fallback for environments that block
+   EventSource.
+4. The implemented memory system is deliberately conservative. The richer
+   bucket/SMC/ledger/artifact-aware design remains future work.
+5. Document-image selection depends on successful parser extraction of
+   canonical image artifacts. A missing/unreadable image returns a structured
+   action error for Gemma to explain.
 
----
+## 11. Core invariants
 
-## 11. Architecture Invariants (NEVER VIOLATE)
-
-  1. Gemma 4B is the ONLY semantic decision maker.
-  2. Canonical artifacts (artifacts/) are write-once after ingestion.
-  3. Chroma is disposable - always rebuildable from artifacts/.
-  4. sage_source and sage_derived Chroma collections must remain separate.
-  5. The dispatcher makes no semantic decisions.
-  6. SAGE_MOCK_MODE=1 must allow 100% of tests to pass on any CPU.
-  7. Gemma-facing compact plugs must NEVER contain internal fields.
-
----
-
-## 12. Branch History
-
-  SARTHAK2427/SAGE:main             - Original SAGE agent runtime (Sarthak base)
-  RakshitJain-py/SAGE:rakshit_docdb_layer - Rakshit DB layer standalone
-  USB snapshot (merged runtime)     - Agent + DB + dispatcher + tools (Stage 1+2A done)
+1. Gemma is the semantic controller and final text writer.
+2. Gemma returns a final response or one named action; it never selects a case.
+3. Qwen is only for readable same-chat images or a specifically selected
+   embedded image belonging to a same-chat document.
+4. Document text RAG and document-image inspection are separate grounded
+   sources; an uploaded screenshot cannot substitute for an image in a PDF.
+5. Canonical document artifacts and SQLite ledger are authoritative local data;
+   Chroma indexes are rebuildable accelerators.
+6. Runtime credentials are ephemeral and never persisted by SAGE.
+7. Background memory work must never hold the user response hostage.
+8. Observer telemetry is diagnostic only; it must not alter model decisions.
+9. `SAGE_MOCK_MODE=1` must keep tests runnable without GPU models or Docker.

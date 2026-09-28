@@ -1,7 +1,7 @@
-// SAGE — v2 UI Logic
+﻿// SAGE â€” v2 UI Logic
 document.addEventListener('DOMContentLoaded', () => {
 
-    // ── DOM ────────────────────────────────────────────
+    // â”€â”€ DOM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const chatMain      = document.getElementById('chatMain');
     const chatBody      = document.getElementById('chatBody');
     const chatMessages  = document.getElementById('chatMessages');
@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const flashRuntimeBackdrop = document.getElementById('flashRuntimeBackdrop');
     const closeFlashRuntimeBtn = document.getElementById('closeFlashRuntimeBtn');
     const flashModeBtn = document.getElementById('flashModeBtn');
-    const reasoningModeBtn = document.getElementById('reasoningModeBtn');
+    const adeptModeBtn = document.getElementById('adeptModeBtn');
     const resetChatInlineBtn = document.getElementById('resetChatInlineBtn');
 
     // Network status popup elements
@@ -53,6 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const execEmptyState  = document.getElementById('execEmptyState');
     const edgeBlurTop     = document.getElementById('edgeBlurTop');
     const edgeBlurBottom  = document.getElementById('edgeBlurBottom');
+    const execTimer = document.getElementById('execTimer');
+    const execContextMetric = document.getElementById('execContextMetric');
+    const execEvidenceMetric = document.getElementById('execEvidenceMetric');
+    const execDocumentsMetric = document.getElementById('execDocumentsMetric');
+    const execMemoryMetric = document.getElementById('execMemoryMetric');
+    const intelligenceNodes = [...document.querySelectorAll('[data-intel-node]')];
 
     // Live Observer
     const observerLaunchBtn = document.getElementById('observerLaunchBtn');
@@ -106,25 +112,94 @@ document.addEventListener('DOMContentLoaded', () => {
     let observerSelectedSequence = null;
     let observerSelectionPinned = false;
     const observerTiles = new Map();
+    let activeInlineExecution = null;
+    let requestRoleHint = '';
+    let runtimeGraphNode = '';
+    let runtimeGraphStartedAt = 0;
+    let runtimeGraphTimer = null;
+    const runtimeGraphPending = [];
+    const runtimeGraphCompleted = new Set();
+    let runtimeGraphSequenceComplete = false;
+    const RUNTIME_NODE_MIN_MS = 650;
+
+    function paintRuntimeNode(nodeName) {
+        intelligenceNodes.forEach(node => {
+            const matches = node.dataset.intelNode === nodeName;
+            node.classList.toggle('active', matches);
+            node.classList.toggle('running', matches);
+        });
+        runtimeGraphNode = nodeName;
+        runtimeGraphStartedAt = performance.now();
+    }
+
+    function clearRuntimeGraph() {
+        clearTimeout(runtimeGraphTimer);
+        runtimeGraphTimer = null;
+        runtimeGraphPending.length = 0;
+        runtimeGraphCompleted.clear();
+        runtimeGraphSequenceComplete = false;
+        runtimeGraphNode = '';
+        intelligenceNodes.forEach(node => node.classList.remove('active', 'running'));
+    }
+
+    function advanceRuntimeGraph() {
+        clearTimeout(runtimeGraphTimer);
+        runtimeGraphTimer = null;
+        const next = runtimeGraphPending.shift();
+        if (next) {
+            paintRuntimeNode(next);
+            const alreadyComplete = runtimeGraphCompleted.delete(next);
+            if (alreadyComplete || runtimeGraphSequenceComplete) runtimeGraphTimer = setTimeout(advanceRuntimeGraph, RUNTIME_NODE_MIN_MS);
+        } else {
+            runtimeGraphNode = '';
+            intelligenceNodes.forEach(node => node.classList.remove('active', 'running'));
+        }
+    }
+
+    function startRuntimeRole(nodeName) {
+        if (!nodeName || nodeName === runtimeGraphNode) return;
+        if (!runtimeGraphNode) { paintRuntimeNode(nodeName); return; }
+        if (runtimeGraphPending.at(-1) !== nodeName) runtimeGraphPending.push(nodeName);
+        const remaining = Math.max(0, RUNTIME_NODE_MIN_MS - (performance.now() - runtimeGraphStartedAt));
+        if (!runtimeGraphTimer) runtimeGraphTimer = setTimeout(advanceRuntimeGraph, remaining);
+    }
+
+    function finishRuntimeRole(nodeName) {
+        if (!nodeName) return;
+        if (nodeName !== runtimeGraphNode) {
+            if (runtimeGraphPending.includes(nodeName)) runtimeGraphCompleted.add(nodeName);
+            return;
+        }
+        const remaining = Math.max(0, RUNTIME_NODE_MIN_MS - (performance.now() - runtimeGraphStartedAt));
+        clearTimeout(runtimeGraphTimer);
+        runtimeGraphTimer = setTimeout(advanceRuntimeGraph, remaining);
+    }
+
+    function finishRuntimeSequence() {
+        runtimeGraphSequenceComplete = true;
+        if (!runtimeGraphNode) { clearRuntimeGraph(); return; }
+        const remaining = Math.max(0, RUNTIME_NODE_MIN_MS - (performance.now() - runtimeGraphStartedAt));
+        if (!runtimeGraphTimer) runtimeGraphTimer = setTimeout(advanceRuntimeGraph, remaining);
+    }
 
     function observerProgressSpec(event) {
         const actor = String(event.actor || '').toLowerCase();
         const phase = String(event.phase || '').toLowerCase();
         const actionName = String(event.payload?.name || '').toLowerCase();
         if (actor === 'sage' && phase === 'mode') {
-            return { key: 'deep-focus', label: 'Deep Focus', actorClass: 'deep', action: 'Deliberate response path', detail: 'A more careful answer plan is active.' };
+            return { key: 'adept', label: 'Adept', actorClass: 'adept', action: 'Deliberate response path', detail: 'A more careful answer plan is active.' };
         }
         if (actor === 'sage' && phase === 'request') {
-            const deep = event.payload?.interaction_mode === 'deep_focus' || activeChatMode === 'deep_focus';
-            return { key: 'request', label: deep ? 'Deep Focus' : 'Flash', actorClass: deep ? 'deep' : 'gemma', action: event.status === 'completed' ? 'Response ready' : 'Preparing your request', detail: event.status === 'completed' ? 'The answer is ready.' : 'Setting up this conversation.' };
+            const adept = activeChatMode === 'adept';
+            return { key: 'request', label: adept ? 'Adept' : 'Flash', actorClass: adept ? 'adept' : 'gemma', action: event.status === 'completed' ? 'Response ready' : 'Preparing your request', detail: event.status === 'completed' ? 'The answer is ready.' : 'Setting up this conversation.' };
         }
         // Context assembly is a local packet build (typically a few ms), not
         // an independent model or retrieval task. Keep it in the full
         // Observer ledger but do not present it as a live-progress tile.
         if (actor === 'memory' && ['recent_context', 'context_packet'].includes(phase)) return null;
         if (actor === 'gemma' && ['model_input', 'model_output'].includes(phase)) {
-            const deep = activeChatMode === 'deep_focus';
-            return { key: 'controller', label: deep ? 'Deep Focus' : 'Flash', actorClass: deep ? 'deep' : 'gemma', action: deep ? 'Examining the request' : 'Composing a response', detail: event.status === 'completed' ? 'The next step is ready.' : deep ? 'Checking the request, context, and available sources.' : 'Using the supplied conversation and information.' };
+            const adept = activeChatMode === 'adept';
+            return { key: 'controller', label: adept ? 'Adept' : 'Flash', actorClass: adept ? 'adept' : 'gemma', action: adept ? 'Examining the request' : 'Composing a response', detail: event.status === 'completed' ? 'The next step is ready.' : adept ? 'Checking the request, context, and available sources.' : 'Using the supplied conversation and information.' };
         }
         if (actor === 'document-rag' && phase === 'semantic_search') {
             return { key: 'document-search', label: 'Document', actorClass: 'knowledge', action: 'Searching the attachment', detail: event.status === 'completed' ? 'Grounded passages are ready.' : 'Finding the relevant material.' };
@@ -153,8 +228,160 @@ document.addEventListener('DOMContentLoaded', () => {
         return null;
     }
 
+    let intelligenceTimerHandle = null;
+    let intelligenceTimerStarted = 0;
+
+    function updateIntelligenceDashboard(event) {
+        const actor = String(event?.actor || '').toLowerCase();
+        const phase = String(event?.phase || '').toLowerCase();
+        const statusValue = String(event?.status || '').toLowerCase();
+        const payload = event?.payload || {};
+        const actionName = String(payload.name || payload.action || '').toLowerCase();
+        const isRunningEvent = ['started', 'queued', 'running'].includes(statusValue);
+        const isTerminalEvent = ['completed', 'failed', 'cancelled'].includes(statusValue);
+        const actionNode = ['vision.inspect', 'document.image.inspect'].includes(actionName) ? 'vision'
+            : actionName === 'document.search' ? 'document-rag'
+            : actionName.includes('code') || actionName.includes('coder') ? 'coder'
+            : actionName.includes('memory') || actionName.includes('ledger') ? 'memory' : '';
+        const nodeName = actionNode
+            || (actor === 'memory-2b' || actor === 'memory' || actor === 'postgres' ? 'memory'
+            : actor === 'document-rag' ? 'document-rag'
+            : actor === 'qwen' || actor === 'vision' ? 'vision'
+            : actor === 'coder' || actor.includes('code') ? 'coder'
+            : actor === 'gemma' || actor === 'sage' || actor === 'agent' ? 'agent'
+            : phase.includes('context') ? 'context' : '');
+
+        if (phase === 'request' && statusValue === 'started' && requestRoleHint) {
+            startRuntimeRole(requestRoleHint);
+        } else if (phase === 'request' && isTerminalEvent) {
+            finishRuntimeSequence();
+        } else if (nodeName && isRunningEvent) {
+            startRuntimeRole(nodeName);
+        } else if (nodeName && isTerminalEvent) {
+            finishRuntimeRole(nodeName);
+        }
+        const contextEvent = [...observerEvents].reverse().find(item => ['recent_context', 'context_packet'].includes(String(item.phase || '').toLowerCase()));
+        const contextPayload = contextEvent?.payload || {};
+        const contextValue = contextPayload.token_count ?? contextPayload.tokens ?? contextPayload.context_tokens;
+        if (execContextMetric) execContextMetric.textContent = contextValue != null ? `${(Number(contextValue) / 1000).toFixed(1)}K` : (contextEvent ? 'Ready' : '—');
+
+        const evidenceEvents = observerEvents.filter(item => String(item.actor || '').toLowerCase() === 'document-rag' && item.status === 'completed');
+        const evidencePayload = evidenceEvents.at(-1)?.payload || {};
+        const evidenceCount = evidencePayload.selected_count ?? evidencePayload.result_count ?? evidencePayload.count;
+        if (execEvidenceMetric) execEvidenceMetric.textContent = evidenceCount != null ? `${evidenceCount} chunks` : (evidenceEvents.length ? 'Ready' : '—');
+        if (execDocumentsMetric) execDocumentsMetric.textContent = `${attachedFiles.length} active`;
+
+        const memoryEvents = observerEvents.filter(item => String(item.actor || '').toLowerCase().startsWith('memory'));
+        const memoryPayload = memoryEvents.at(-1)?.payload || {};
+        const memoryCount = memoryPayload.memory_count ?? memoryPayload.count ?? memoryPayload.memories?.length;
+        if (execMemoryMetric) execMemoryMetric.textContent = memoryCount != null ? `${memoryCount} items` : (memoryEvents.length ? 'Active' : '—');
+    }
+
+    function startIntelligenceTimer() {
+        clearInterval(intelligenceTimerHandle);
+        intelligenceTimerStarted = performance.now();
+        if (execTimer) execTimer.textContent = '0.0 s';
+        intelligenceTimerHandle = setInterval(() => {
+            if (execTimer) execTimer.textContent = `${((performance.now() - intelligenceTimerStarted) / 1000).toFixed(1)} s`;
+        }, 100);
+    }
+
+    function stopIntelligenceTimer() {
+        clearInterval(intelligenceTimerHandle);
+        intelligenceTimerHandle = null;
+        if (execTimer && intelligenceTimerStarted) execTimer.textContent = `${((performance.now() - intelligenceTimerStarted) / 1000).toFixed(1)} s`;
+    }
+    function inlineStageForEvent(event) {
+        const actor = String(event?.actor || '').toLowerCase();
+        const phase = String(event?.phase || '').toLowerCase();
+        if (phase === 'request' || phase.includes('context')) return 0;
+        if (phase.includes('search') || phase === 'action_request' || actor === 'document-rag' || actor === 'memory') return 1;
+        if (actor === 'qwen' || actor.includes('code') || phase === 'action_result' || phase === 'model_input') return 2;
+        if (phase === 'model_output' || phase === 'response') return 3;
+        return 0;
+    }
+
+    function appendInlineExecution(mode) {
+        const msg = document.createElement('div');
+        msg.className = `chat-msg sage inline-execution-message ${mode === 'adept' ? 'adept' : 'flash'} fade-in`;
+        msg.innerHTML = `
+            <div class="inline-agent-identity">
+                <span class="inline-agent-orb">S</span>
+                <span><strong>SAGE</strong><small class="inline-agent-status">Understanding your request…</small></span>
+            </div>
+            <div class="inline-execution-body">
+                <div class="inline-pipeline">
+                    ${['Understand','Retrieve','Analyze','Respond'].map((label, index) => `<span class="inline-stage" data-stage="${index}"><i></i>${label}</span>${index < 3 ? '<b></b>' : ''}`).join('')}
+                </div>
+                <div class="inline-event-list"></div>
+            </div>
+            <button class="inline-execution-receipt" type="button" aria-expanded="false"></button>`;
+        chatMessages.appendChild(msg);
+        const receipt = msg.querySelector('.inline-execution-receipt');
+        receipt.addEventListener('click', () => {
+            const collapsed = msg.classList.toggle('collapsed');
+            receipt.setAttribute('aria-expanded', String(!collapsed));
+        });
+        activeInlineExecution = { element: msg, mode, started: performance.now(), events: new Map(), stage: 0 };
+        updateInlineExecutionStage(0);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return msg;
+    }
+
+    function updateInlineExecutionStage(stage) {
+        if (!activeInlineExecution) return;
+        activeInlineExecution.stage = Math.max(activeInlineExecution.stage, stage);
+        activeInlineExecution.element.querySelectorAll('.inline-stage').forEach((item, index) => {
+            item.classList.toggle('done', index < activeInlineExecution.stage);
+            item.classList.toggle('active', index === activeInlineExecution.stage);
+            const connector = item.nextElementSibling;
+            if (connector?.tagName === 'B') connector.classList.toggle('done', index < activeInlineExecution.stage);
+        });
+    }
+
+    function updateInlineExecution(event, spec) {
+        if (!activeInlineExecution) return;
+        const stage = inlineStageForEvent(event);
+        updateInlineExecutionStage(stage);
+        const status = activeInlineExecution.element.querySelector('.inline-agent-status');
+        const stageCopy = ['Understanding your request…','Gathering relevant context…','Working through the evidence…','Writing your answer…'];
+        if (status) status.textContent = stageCopy[stage];
+        if (!spec) return;
+        const key = spec.key || `event-${event.sequence}`;
+        let row = activeInlineExecution.events.get(key);
+        if (!row) {
+            row = document.createElement('div');
+            row.className = 'inline-event';
+            row.innerHTML = `<span class="inline-event-dot"></span><span class="inline-event-icon">${stage === 1 ? '⌕' : stage === 2 ? '◆' : '◇'}</span><span><strong></strong><small></small><em></em></span>`;
+            activeInlineExecution.element.querySelector('.inline-event-list')?.appendChild(row);
+            activeInlineExecution.events.set(key, row);
+        }
+        row.classList.toggle('live', ['started','queued','running'].includes(event.status));
+        row.classList.toggle('complete', event.status === 'completed');
+        row.querySelector('strong').textContent = spec.action || spec.label || 'Working';
+        row.querySelector('small').textContent = spec.detail || event.summary || '';
+        row.querySelector('em').textContent = `${spec.label || 'SAGE'}${row.classList.contains('live') ? ' · LIVE' : event.duration_ms != null ? ` · ${(Number(event.duration_ms)/1000).toFixed(1)}s` : ''}`;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function collapseInlineExecution(telemetry) {
+        if (!activeInlineExecution) return;
+        const state = activeInlineExecution;
+        updateInlineExecutionStage(3);
+        state.element.querySelectorAll('.inline-stage').forEach(item => { item.classList.add('done'); item.classList.remove('active'); });
+        state.element.querySelectorAll('.inline-pipeline > b').forEach(item => item.classList.add('done'));
+        const seconds = telemetry?.total_wall_time != null ? Number(telemetry.total_wall_time) : (performance.now() - state.started) / 1000;
+        const receipt = state.element.querySelector('.inline-execution-receipt');
+        if (receipt) receipt.textContent = `◆ ${state.mode === 'adept' ? 'Adept' : 'Flash'} completed in ${seconds.toFixed(1)}s · ${state.events.size} operations · expand`;
+        const status = state.element.querySelector('.inline-agent-status');
+        if (status) status.textContent = 'Answer ready.';
+        state.element.classList.add('collapsed', 'complete');
+        activeInlineExecution = null;
+    }
     function mirrorObserverEventToPanel(event) {
+        updateIntelligenceDashboard(event);
         const spec = observerProgressSpec(event);
+        updateInlineExecution(event, spec);
         if (!spec) return;
         const location = event.payload?.provider === 'remote' ? 'Remote' : 'On this device';
         const duration = event.duration_ms != null ? `${(Number(event.duration_ms) / 1000).toFixed(1)}s` : undefined;
@@ -214,8 +441,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (observerDetailSummary) observerDetailSummary.textContent = event.summary || '';
         if (observerDetailMeta) {
             const time = new Date(Number(event.timestamp || 0) * 1000).toLocaleTimeString();
-            const duration = event.duration_ms != null ? ` · ${Number(event.duration_ms).toFixed(1)} ms` : '';
-            observerDetailMeta.textContent = `${event.actor} · ${event.status} · ${time}${duration}`;
+            const duration = event.duration_ms != null ? ` Â· ${Number(event.duration_ms).toFixed(1)} ms` : '';
+            observerDetailMeta.textContent = `${event.actor} Â· ${event.status} Â· ${time}${duration}`;
         }
         if (observerDetailSections) {
             observerDetailSections.innerHTML = '';
@@ -253,14 +480,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderObserver() {
         if (observerEventCount) observerEventCount.textContent = String(observerEvents.length);
         const last = observerEvents[observerEvents.length - 1];
-        if (observerPopoverStatus) observerPopoverStatus.textContent = last ? `${last.actor}: ${last.summary}` : 'Waiting for a run…';
-        if (observerRunLabel) observerRunLabel.textContent = observerRunId ? `Run ${observerRunId} · ${observerEvents.length} events` : 'No active run';
+        if (observerPopoverStatus) observerPopoverStatus.textContent = last ? `${last.actor}: ${last.summary}` : 'Waiting for a runâ€¦';
+        if (observerRunLabel) observerRunLabel.textContent = observerRunId ? `Run ${observerRunId} Â· ${observerEvents.length} events` : 'No active run';
         if (observerMiniEvents) {
             observerMiniEvents.innerHTML = '';
             observerEvents.slice(-7).reverse().forEach(event => {
                 const row = document.createElement('div');
                 row.className = `observer-mini-event ${event.status}`;
-                row.innerHTML = `<i></i><span><strong>${esc(event.actor)} · ${esc(event.phase)}</strong><br>${esc(event.summary)}</span><small>#${event.sequence}</small>`;
+                row.innerHTML = `<i></i><span><strong>${esc(event.actor)} Â· ${esc(event.phase)}</strong><br>${esc(event.summary)}</span><small>#${event.sequence}</small>`;
                 observerMiniEvents.appendChild(row);
             });
         }
@@ -273,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 button.dataset.sequence = String(event.sequence);
                 if (Number(event.sequence) === observerSelectedSequence) button.classList.add('active');
                 const time = new Date(Number(event.timestamp || 0) * 1000).toLocaleTimeString();
-                button.innerHTML = `<span class="observer-event-seq">#${event.sequence}</span><span><strong>${esc(event.actor)} · ${esc(event.phase)}</strong><span>${esc(event.summary)}</span></span><time>${esc(time)}</time>`;
+                button.innerHTML = `<span class="observer-event-seq">#${event.sequence}</span><span><strong>${esc(event.actor)} Â· ${esc(event.phase)}</strong><span>${esc(event.summary)}</span></span><time>${esc(time)}</time>`;
                 observerTimeline.appendChild(button);
             });
             if (!observerSelectionPinned) observerTimeline.scrollTop = observerTimeline.scrollHeight;
@@ -319,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
         observerSelectedSequence = null;
         observerSelectionPinned = false;
         observerTiles.clear();
+        clearRuntimeGraph();
         if (observerDetailEmpty) observerDetailEmpty.hidden = false;
         if (observerDetailContent) observerDetailContent.hidden = true;
         renderObserver();
@@ -335,7 +563,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (error) { console.warn('[Observer] Invalid event', error); }
         });
         observerSource.onerror = () => {
-            if (observerPopoverStatus) observerPopoverStatus.textContent = 'Live stream reconnecting…';
+            if (observerPopoverStatus) observerPopoverStatus.textContent = 'Live stream reconnectingâ€¦';
         };
     }
 
@@ -350,7 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    observerLaunchBtn?.addEventListener('click', event => { event.stopPropagation(); observerPopover.hidden = !observerPopover.hidden; });
+    observerLaunchBtn?.addEventListener('click', event => { event.stopPropagation(); setObserverModal(true); });
     observerExpandBtn?.addEventListener('click', () => setObserverModal(true));
     observerCloseBtn?.addEventListener('click', () => setObserverModal(false));
     observerModalBackdrop?.addEventListener('click', () => setObserverModal(false));
@@ -362,9 +590,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (window.location.hash === '#observer') setObserverModal(true);
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // STATUS POLL (Sync backend model configs & health)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     async function updateStatus() {
         try {
             const res = await fetch('/api/status');
@@ -402,9 +630,9 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus();
     setInterval(updateStatus, 8000);
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SIDEBAR COLLAPSE / EXPAND
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function collapseSidebar() {
         sidebarLeft.style.width = '';
         sidebarLeft.classList.add('collapsed');
@@ -451,9 +679,9 @@ document.addEventListener('DOMContentLoaded', () => {
         expandPanel();
     });
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // DRAG RESIZE (manual dynamic resize, max stretch reduced)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function setupDrag(handle, panel, dir) {
         if (!handle || !panel) return;
         let startX, startW;
@@ -494,9 +722,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setupDrag(leftDragHandle,  sidebarLeft, 'left');
     setupDrag(rightDragHandle, panelRight,  'right');
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SETTINGS PANEL
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     const SETTINGS_KEY = 'sage_ui_settings_v1';
     const settingTheme = document.getElementById('settingTheme');
     const settingFontSize = document.getElementById('settingFontSize');
@@ -630,7 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (roles || []).forEach(role => {
             if (role.suggested_model_id && fields[role.role]) {
                 fields[role.role].value = role.suggested_model_id;
-                changed.push(`${role.role} → ${role.suggested_model_id}`);
+                changed.push(`${role.role} â†’ ${role.suggested_model_id}`);
             }
         });
         return changed;
@@ -687,7 +915,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/flash/catalog');
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Catalog unavailable');
-            const labels = Object.values(data.models || {}).map(model => `${model.role}: ${model.file}`).join('  •  ');
+            const labels = Object.values(data.models || {}).map(model => `${model.role}: ${model.file}`).join('  â€¢  ');
             if (note) note.textContent = labels || 'No catalog entries found.';
         } catch (error) {
             if (note) note.textContent = `Catalog error: ${error.message}`;
@@ -735,7 +963,7 @@ document.addEventListener('DOMContentLoaded', () => {
             values[3].textContent = 'User-configured';
             footer.textContent = 'URLs and keys clear when the SAGE server restarts';
         } else {
-            badge.textContent = '100% LOCAL · ZERO LEAKAGE';
+            badge.textContent = '100% LOCAL Â· ZERO LEAKAGE';
             desc.textContent = 'All agent steps, model reasoning, and attached documents run exclusively on your local machine.';
             values[0].textContent = 'Blocked / Air-Gapped';
             values[1].textContent = '0% (Completely Safe)';
@@ -747,7 +975,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function applyFlashRuntime({ quiet = false } = {}) {
         const payload = buildFlashRuntimePayload();
-        if (!quiet) flashStatus('working', 'Applying runtime', 'Updating ephemeral role bindings…');
+        if (!quiet) flashStatus('working', 'Applying runtime', 'Updating ephemeral role bindingsâ€¦');
         const res = await fetch('/api/flash/runtime', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
@@ -793,9 +1021,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 banner.classList.remove('show');
                 if (summary) summary.textContent = 'Remote GPU active for this session';
             } else if (!readiness.local_inference_ready && !runtime.configured) {
-                if (summary) summary.textContent = 'Local models missing — configure runtime';
+                if (summary) summary.textContent = 'Local models missing â€” configure runtime';
                 const missing = (readiness.missing_model_files || []).slice(0, 2).join(', ');
-                banner.innerHTML = `Local inference is not ready${missing ? ` (missing: ${esc(missing)})` : ''}. Open Settings → Flash runtime to use a remote GPU, or set LLAMA_SERVER_PATH and MODEL_DIR. <button type="button" id="runtimeBannerOpen">Open runtime</button>`;
+                banner.innerHTML = `Local inference is not ready${missing ? ` (missing: ${esc(missing)})` : ''}. Open Settings â†’ Flash runtime to use a remote GPU, or set LLAMA_SERVER_PATH and MODEL_DIR. <button type="button" id="runtimeBannerOpen">Open runtime</button>`;
                 banner.classList.add('show');
             } else {
                 banner.classList.remove('show');
@@ -821,20 +1049,20 @@ document.addEventListener('DOMContentLoaded', () => {
         flashTestBtn.disabled = true;
         try {
             await applyFlashRuntime({ quiet: true });
-            flashStatus('working', 'Testing roles', 'Starting local models if needed and probing every enabled endpoint…');
+            flashStatus('working', 'Testing roles', 'Starting local models if needed and probing every enabled endpointâ€¦');
             let res = await fetch('/api/flash/runtime/test', { method: 'POST' });
             let data = await res.json();
             if (!res.ok) throw new Error(data.detail || data.error || 'Connection test failed');
             const corrected = useSuggestedFlashModelIds(data.roles);
             if (corrected.length) {
-                flashStatus('working', 'Matching bridge model IDs', corrected.join('  •  '));
+                flashStatus('working', 'Matching bridge model IDs', corrected.join('  â€¢  '));
                 await applyFlashRuntime({ quiet: true });
                 res = await fetch('/api/flash/runtime/test', { method: 'POST' });
                 data = await res.json();
                 if (!res.ok) throw new Error(data.detail || data.error || 'Connection re-test failed');
             }
             renderFlashDiagnostics(data.roles);
-            const detail = (data.roles || []).map(role => `${role.role}: ${role.enabled === false ? 'disabled' : (role.healthy ? 'ready' : 'failed')}`).join('  •  ');
+            const detail = (data.roles || []).map(role => `${role.role}: ${role.enabled === false ? 'disabled' : (role.healthy ? 'ready' : 'failed')}`).join('  â€¢  ');
             flashStatus(data.healthy ? 'success' : 'error', data.healthy ? 'Flash is ready' : 'One or more roles failed', detail);
         } catch (error) {
             flashStatus('error', 'Connection test failed', error.message);
@@ -849,7 +1077,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const role = document.getElementById('flashDeployRole')?.value || 'gemma';
             const connectionId = document.getElementById('flashDeployTarget')?.value || 'primary';
             const gpu = Number(document.getElementById('flashDeployGpu')?.value || 0);
-            flashStatus('working', `Deploying ${role}`, 'The remote bridge is downloading and starting the catalog model…');
+            flashStatus('working', `Deploying ${role}`, 'The remote bridge is downloading and starting the catalog modelâ€¦');
             const res = await fetch('/api/flash/deploy', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, connection_id: connectionId, gpu })
             });
@@ -873,21 +1101,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setChatMode(mode, { announce = true } = {}) {
-        activeChatMode = mode === 'deep_focus' ? 'deep_focus' : 'flash';
-        const deep = activeChatMode === 'deep_focus';
-        flashModeBtn?.classList.toggle('active', !deep);
-        reasoningModeBtn?.classList.toggle('active', deep);
-        document.body.classList.toggle('deep-focus-mode', deep);
-        if (promptInput) promptInput.placeholder = deep ? 'Ask SAGE for a considered answer' : 'Ask SAGE';
-        if (announce) showComposerNotice(deep ? 'Deep Focus is active — SAGE will take a more deliberate path.' : 'Flash is active — optimized for direct answers.');
+        activeChatMode = mode === 'adept' ? 'adept' : 'flash';
+        const adept = activeChatMode === 'adept';
+        flashModeBtn?.classList.toggle('active', !adept);
+        adeptModeBtn?.classList.toggle('active', adept);
+        document.body.classList.toggle('adept-mode', adept);
+        if (promptInput) promptInput.placeholder = adept ? 'Ask SAGE for a considered answer' : 'Ask SAGE';
+        if (announce) showComposerNotice(adept ? 'Adept is active — SAGE will present a more deliberate workflow.' : 'Flash is active — optimized for direct answers.');
     }
     flashModeBtn?.addEventListener('click', () => setChatMode('flash'));
-    reasoningModeBtn?.addEventListener('click', () => setChatMode('deep_focus'));
+    adeptModeBtn?.addEventListener('click', () => setChatMode('adept'));
     setChatMode('flash', { announce: false });
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // NETWORK & LEAK STATUS POPOVER (Positioned to the left of the button)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function positionNetCard() {
         if (!netStatusCard || !netStatusBtn || netStatusCard.style.display === 'none') return;
         const rect = netStatusBtn.getBoundingClientRect();
@@ -939,10 +1167,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // TABS & 3D ARTIFACT GRAPH INTEGRATION
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     const artifactsView   = document.getElementById('artifactsView');
+    const pdfCanvasView   = document.getElementById('pdfCanvasView');
+    const pdfCanvasFrame  = document.getElementById('pdfCanvasFrame');
+    const pdfCanvasEmpty  = document.getElementById('pdfCanvasEmpty');
+    const pdfCanvasTitle  = document.getElementById('pdfCanvasTitle');
+    const pdfCanvasPageLabel = document.getElementById('pdfCanvasPageLabel');
+    const pdfCanvasDownloadBtn = document.getElementById('pdfCanvasDownloadBtn');
     const toolsModelsView = document.getElementById('toolsModelsView');
     const memoryVaultView = document.getElementById('memoryVaultView');
     let artifactGraph = null;
@@ -1136,9 +1370,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // THREADS WEBGL BACKGROUND (Chat Tab Exclusive)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     class ChatThreadsBackground {
         constructor(canvas, container) {
             this.canvas = canvas;
@@ -1414,9 +1648,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const tab = btn.dataset.tab;
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            if (pdfCanvasView) pdfCanvasView.style.display = tab === 'canvas' ? 'flex' : 'none';
 
             if (tab === 'artifacts') {
-                collapseSidebar();
+                expandSidebar();
                 chatThreads?.stop();
                 document.querySelector('.app-shell')?.classList.add('artifacts-mode');
                 document.body.classList.add('artifacts-mode');
@@ -1432,6 +1667,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         setTimeout(() => artifactGraph.onWindowResize(), 50);
                     }
                 }
+            } else if (tab === 'canvas') {
+                expandSidebar();
+                chatThreads?.stop();
+                document.querySelector('.app-shell')?.classList.remove('artifacts-mode');
+                document.body.classList.remove('artifacts-mode');
+                if (artifactsView) artifactsView.style.display = 'none';
+                if (toolsModelsView) toolsModelsView.style.display = 'none';
+                if (memoryVaultView) memoryVaultView.style.display = 'none';
+                if (chatBody) chatBody.style.display = 'none';
+                if (artifactGraph) artifactGraph.stop();
             } else if (tab === 'tools-models') {
                 collapseSidebar();
                 chatThreads?.stop();
@@ -1459,7 +1704,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (chatActive) positionInput(false);
             } else if (tab === 'memory') {
-                collapseSidebar();
+                expandSidebar();
                 chatThreads?.stop();
                 document.querySelector('.app-shell')?.classList.remove('artifacts-mode');
                 document.body.classList.remove('artifacts-mode');
@@ -1477,13 +1722,134 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    function normalizePdfText(value) {
+        return String(value || '')
+            .replace(/```[^\r\n]*\r?\n/g, '').replace(/```/g, '')
+            .replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/^#{1,6}\s+/gm, '').replace(/[•●▪]/g, '-').replace(/[–—]/g, '-')
+            .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+            .normalize('NFKD').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '?');
+    }
+
+    function wrapPdfText(text, width = 86) {
+        const lines = [];
+        String(text).split(/\r?\n/).forEach(paragraph => {
+            if (!paragraph.trim()) { lines.push(''); return; }
+            let current = '';
+            paragraph.split(/\s+/).forEach(word => {
+                if (!current) current = word;
+                else if (`${current} ${word}`.length <= width) current += ` ${word}`;
+                else { lines.push(current); current = word; }
+            });
+            if (current) lines.push(current);
+        });
+        return lines;
+    }
+
+    function pdfEscape(value) {
+        return String(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+    }
+
+    function createMessagePdf(answer) {
+        const lines = wrapPdfText(normalizePdfText(answer));
+        const linesPerPage = 48;
+        const pages = [];
+        for (let index = 0; index < Math.max(lines.length, 1); index += linesPerPage) {
+            pages.push(lines.slice(index, index + linesPerPage));
+        }
+        const pageCount = pages.length;
+        const fontObject = 3 + pageCount * 2;
+        const objects = [];
+        objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+        objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`;
+        pages.forEach((pageLines, index) => {
+            const pageObject = 3 + index * 2;
+            const streamObject = pageObject + 1;
+            const commands = ['BT', '/F1 11 Tf', '15 TL', '54 770 Td'];
+            pageLines.forEach((line, lineIndex) => {
+                if (lineIndex) commands.push('T*');
+                commands.push(`(${pdfEscape(line)}) Tj`);
+            });
+            commands.push('ET');
+            const stream = commands.join('\n');
+            objects[pageObject] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObject} 0 R >> >> /Contents ${streamObject} 0 R >>`;
+            objects[streamObject] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+        });
+        objects[fontObject] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        let pdf = '%PDF-1.4\n';
+        const offsets = [0];
+        for (let index = 1; index < objects.length; index++) {
+            offsets[index] = pdf.length;
+            pdf += `${index} 0 obj\n${objects[index]}\nendobj\n`;
+        }
+        const xrefOffset = pdf.length;
+        pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+        for (let index = 1; index < objects.length; index++) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+        pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+        return { blob: new Blob([pdf], { type: 'application/pdf' }), pages: pageCount };
+    }
+
+    function exportReplyToCanvas(answer, button) {
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.textContent = 'Creating PDF…';
+        try {
+            const generated = createMessagePdf(answer);
+            const firstLine = normalizePdfText(answer).split(/\r?\n/).find(line => line.trim()) || 'SAGE response';
+            const title = firstLine.trim().slice(0, 54);
+            window.renderGeneratedPdf(generated.blob, {
+                title, pages: generated.pages,
+                filename: `sage-response-${Date.now()}.pdf`
+            });
+            button.textContent = 'Open in Canvas';
+        } catch (error) {
+            console.error('PDF export failed:', error);
+            button.textContent = 'Export failed';
+        } finally {
+            button.disabled = false;
+            setTimeout(() => { button.innerHTML = original; }, 1800);
+        }
+    }
+    let activePdfCanvasUrl = '';
+    window.renderGeneratedPdf = (source, { title = 'Generated PDF', pages = null, filename = 'sage-document.pdf' } = {}) => {
+        if (!pdfCanvasFrame) return;
+        if (activePdfCanvasUrl.startsWith('blob:')) URL.revokeObjectURL(activePdfCanvasUrl);
+        activePdfCanvasUrl = source instanceof Blob ? URL.createObjectURL(source) : String(source || '');
+        if (!activePdfCanvasUrl) return;
+        pdfCanvasFrame.src = activePdfCanvasUrl;
+        pdfCanvasFrame.hidden = false;
+        if (pdfCanvasEmpty) pdfCanvasEmpty.hidden = true;
+        if (pdfCanvasTitle) pdfCanvasTitle.textContent = title;
+        if (pdfCanvasPageLabel) pdfCanvasPageLabel.textContent = pages ? `${pages} pages` : 'PDF ready';
+        if (pdfCanvasDownloadBtn) {
+            pdfCanvasDownloadBtn.disabled = false;
+            pdfCanvasDownloadBtn.onclick = () => {
+                const link = document.createElement('a');
+                link.href = activePdfCanvasUrl;
+                link.download = filename;
+                link.click();
+            };
+        }
+        document.querySelector('.tab-btn[data-tab="canvas"]')?.click();
+    };
+    const sidebarLibraryItems = [...document.querySelectorAll('.sidebar-library-item')];
+    sidebarLibraryItems.forEach(item => {
+        item.addEventListener('click', () => {
+            sidebarLibraryItems.forEach(button => button.classList.remove('active'));
+            item.classList.add('active');
+            document.querySelector(`.tab-btn[data-tab="${item.dataset.libraryTab}"]`)?.click();
+        });
+    });
+    document.querySelector('.tab-btn[data-tab="chat"]')?.addEventListener('click', () => {
+        sidebarLibraryItems.forEach(item => item.classList.remove('active'));
+    });
     if (window.location.pathname === '/memory' || window.location.hash === '#memory') {
         document.querySelector('.tab-btn[data-tab="memory"]')?.click();
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // TOOLS & MODELS CONTROLLER (Frontend-First Prototype)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     const INSTALLED_MODELS = [
         {
             id: 'gemma-4b',
@@ -1628,7 +1994,7 @@ document.addEventListener('DOMContentLoaded', () => {
             provider: 'google',
             badge: 'New release',
             badgeClass: 'top',
-            description: 'Google’s high-efficiency lightweight open model built with knowledge distillation and interleaving sliding window attention.',
+            description: 'Googleâ€™s high-efficiency lightweight open model built with knowledge distillation and interleaving sliding window attention.',
             parameters: '9.2B',
             context: '8K',
             modality: 'Text',
@@ -1692,7 +2058,7 @@ document.addEventListener('DOMContentLoaded', () => {
             provider: 'meta-llama',
             badge: 'Edge Optimized',
             badgeClass: 'new',
-            description: 'Meta’s highly optimized lightweight model specifically pruned and distilled for on-device, low-latency applications.',
+            description: 'Metaâ€™s highly optimized lightweight model specifically pruned and distilled for on-device, low-latency applications.',
             parameters: '3.2B',
             context: '128K',
             modality: 'Text',
@@ -1724,7 +2090,7 @@ document.addEventListener('DOMContentLoaded', () => {
             provider: 'HuggingFaceTB',
             badge: 'Ultra Compact',
             badgeClass: 'top',
-            description: 'Hugging Face’s compact instruction-tuned model trained on 11 trillion tokens. Outperforms previous-generation models twice its size.',
+            description: 'Hugging Faceâ€™s compact instruction-tuned model trained on 11 trillion tokens. Outperforms previous-generation models twice its size.',
             parameters: '1.7B',
             context: '8K',
             modality: 'Text',
@@ -1869,7 +2235,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const metaEl = document.getElementById(`tmSlot${cap}Meta`);
         if (metaEl) {
-            metaEl.textContent = `Format: ${model.format} · Context: ${model.context} · VRAM: ${model.vram}`;
+            metaEl.textContent = `Format: ${model.format} Â· Context: ${model.context} Â· VRAM: ${model.vram}`;
         }
 
         const menu = document.getElementById(`tmSlotMenu${cap}`);
@@ -1974,7 +2340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (titleEl) titleEl.textContent = model.name;
 
         const authorEl = document.getElementById('tmModalAuthor');
-        if (authorEl) authorEl.textContent = `Maintained by ${model.provider} · ${model.license} License`;
+        if (authorEl) authorEl.textContent = `Maintained by ${model.provider} Â· ${model.license} License`;
 
         const hfBtn = document.getElementById('tmModalHfBtn');
         if (hfBtn) hfBtn.href = model.hfUrl;
@@ -2067,9 +2433,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ddDetectBtn?.addEventListener('click', triggerScan);
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // HISTORY & DELETE
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     const historyList = document.getElementById('historyList');
 
     function formatHistoryTime(iso) {
@@ -2081,9 +2447,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const yesterday = new Date(now);
         yesterday.setDate(now.getDate() - 1);
         const time = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
-        if (sameDay) return 'Today · ' + time;
-        if (date.toDateString() === yesterday.toDateString()) return 'Yesterday · ' + time;
-        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + time;
+        if (sameDay) return 'Today Â· ' + time;
+        if (date.toDateString() === yesterday.toDateString()) return 'Yesterday Â· ' + time;
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' Â· ' + time;
     }
 
     function createHistoryItem(chat, { active = false } = {}) {
@@ -2231,9 +2597,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadChatHistory();
 
-    // ══════════════════════════════════════════════════
-    // NEW CHAT — reset to initial centered state
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // NEW CHAT â€” reset to initial centered state
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     newChatBtn?.addEventListener('click', () => resetChat());
     resetChatInlineBtn?.addEventListener('click', async () => {
         if (isRunning) return;
@@ -2261,7 +2627,7 @@ document.addEventListener('DOMContentLoaded', () => {
         welcomeOverlay.style.opacity = '';
         welcomeOverlay.style.transition = '';
 
-        // Remove active state → back to initial
+        // Remove active state â†’ back to initial
         chatMain.setAttribute('data-state', 'initial');
         chatMessages.style.bottom = '';
 
@@ -2285,9 +2651,9 @@ document.addEventListener('DOMContentLoaded', () => {
         rightPanelIdle();
     }
 
-    // ══════════════════════════════════════════════════
-    // ACTIVATE CHAT: input center → bottom animation
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ACTIVATE CHAT: input center â†’ bottom animation
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function activateChat() {
         if (chatActive) return;
         chatActive = true;
@@ -2327,9 +2693,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // POSITION INPUT AT BOTTOM (active state)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function positionInput(animate) {
         if (!chatActive) return;
         const bodyH = chatBody.offsetHeight;
@@ -2368,9 +2734,9 @@ document.addEventListener('DOMContentLoaded', () => {
         positionNetCard();
     });
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // FILES & ATTACHMENT PREVIEW (ChatGPT Style)
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', e => {
         handleFiles(Array.from(e.target.files));
@@ -2410,9 +2776,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // IN-SITE DOCUMENT PREVIEW & OPTIONAL DOWNLOAD
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function closeDocPreview() {
         if (!docPreviewModal) return;
         docPreviewModal.style.display = 'none';
@@ -2761,7 +3127,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update modal header
         if (dpmFileName) dpmFileName.textContent = info.name;
-        if (dpmFileMeta) dpmFileMeta.textContent = `${info.typeLabel} · ${info.sizeStr}`;
+        if (dpmFileMeta) dpmFileMeta.textContent = `${info.typeLabel} Â· ${info.sizeStr}`;
         if (dpmFileIcon) {
             dpmFileIcon.className = `dpm-file-icon ${info.ext || 'other'}`;
             dpmFileIcon.innerHTML = info.iconHtml;
@@ -2888,7 +3254,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${info.iconHtml}
                 <div class="att-card-info">
                     <span class="att-card-name">${esc(info.name)}</span>
-                    <span class="att-card-meta">${info.typeLabel} · ${info.sizeStr}</span>
+                    <span class="att-card-meta">${info.typeLabel} Â· ${info.sizeStr}</span>
                 </div>
                 <button class="att-card-rm" title="Remove attachment" aria-label="Remove">&times;</button>
             `;
@@ -2914,18 +3280,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (chatActive) positionInput(false);
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // TEXTAREA AUTO-RESIZE
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     promptInput.addEventListener('input', () => {
         promptInput.style.height = 'auto';
         promptInput.style.height = Math.min(promptInput.scrollHeight, 150) + 'px';
         if (chatActive) positionInput(false);
     });
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // EXECUTION TILES STREAM & DEPTH-OF-FIELD EDGE BLUR
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     let activeTimers = [];
     let currentAbortController = null;
     let execStepCounter = 0;
@@ -3108,6 +3474,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearExecTimers();
         execStepCounter = 0;
         observerTiles.clear();
+        clearRuntimeGraph();
         if (execTilesTrack) {
             const tiles = execTilesTrack.querySelectorAll('.exec-tile');
             tiles.forEach(t => {
@@ -3121,24 +3488,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function rightPanelRunning() {
+        startIntelligenceTimer();
         if (execStatusDot) execStatusDot.className = 'exec-dot running';
         if (execStatusText) execStatusText.textContent = 'Running';
     }
 
     function rightPanelDone() {
+        stopIntelligenceTimer();
         const memoryWorking = [...observerTiles.keys()].some(key => key.startsWith('memory-curation'));
         if (execStatusDot) execStatusDot.className = memoryWorking ? 'exec-dot running' : 'exec-dot done';
-        if (execStatusText) execStatusText.textContent = memoryWorking ? 'Answer ready · memory working' : 'Done';
+        if (execStatusText) execStatusText.textContent = memoryWorking ? 'Answer ready Â· memory working' : 'Done';
     }
 
     function rightPanelIdle() {
+        stopIntelligenceTimer();
+        intelligenceTimerStarted = 0;
+        if (execTimer) execTimer.textContent = '0.0 s';
         if (execStatusDot) execStatusDot.className = 'exec-dot';
         if (execStatusText) execStatusText.textContent = 'Idle';
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // STOP BUTTON
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     stopBtn?.addEventListener('click', async () => {
         try {
             await fetch('/api/stop', { method: 'POST' });
@@ -3166,9 +3538,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (st) st.remove();
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SEND MESSAGE
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     promptInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
@@ -3180,12 +3552,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!text && !attachedFiles.length) return;
 
         const isFirstMessage = !chatActive;
-        const pendingText = text;
-        const pendingFiles = [...attachedFiles];
         const historyTitle = text || (attachedFiles[0]?.name ? 'File: ' + attachedFiles[0].name : 'New conversation');
+        const codingRequest = /\b(code|coding|script|function|class|algorithm|debug|bug|refactor|python|javascript|typescript|java|c\+\+|sql|html|css|api|implement)\b/i.test(text);
+        const visualRequest = attachedFiles.some(file => /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''));
+        requestRoleHint = activeChatMode === 'adept' && codingRequest ? 'coder' : visualRequest ? 'vision' : '';
 
         isRunning = true;
         sendBtn.disabled = true;
+        flashModeBtn.disabled = true;
+        adeptModeBtn.disabled = true;
         promptInput.disabled = true;
         stopBtn.style.display = 'flex';
 
@@ -3196,26 +3571,21 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('observer_run_id', requestObserverRunId);
         formData.append('temperature', String(uiSettings.temperature || '0.7'));
         formData.append('save_history', uiSettings.saveHistory ? '1' : '0');
-        formData.append('interaction_mode', activeChatMode);
+        // Adept is a frontend presentation mode; transport remains Flash-compatible.
+        formData.append('interaction_mode', 'flash');
         const fileNames = attachedFiles.map(f => f.name);
         const hasFiles = attachedFiles.length > 0;
         attachedFiles.forEach(f => formData.append('files', f));
 
-        // If already active, show user bubble and thinking immediately
-        let thinking = null;
-        if (!isFirstMessage) {
-            appendUserMsg(text, attachedFiles);
-            attachedFiles = [];
-            renderAttachments();
-            promptInput.value = '';
-            promptInput.style.height = 'auto';
-            positionInput(false);
-            thinking = appendThinking();
-        } else {
-            // First message: chatbox stays in the center while user types and models run
-            showCardStatus(activeChatMode === 'deep_focus' ? 'Deep Focus is mapping a deliberate answer...' : 'Flash is preparing your answer...');
-        }
-
+        // Enter the conversation immediately and show live execution for every turn.
+        if (isFirstMessage) activateChat();
+        appendUserMsg(text, attachedFiles);
+        attachedFiles = [];
+        renderAttachments();
+        promptInput.value = '';
+        promptInput.style.height = 'auto';
+        positionInput(false);
+        const thinking = appendInlineExecution(activeChatMode);
         // Reset execution tiles, expand right panel, and set status to running
         clearExecTiles();
         expandPanel();
@@ -3243,32 +3613,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (uiSettings.saveHistory && data?.status !== 'error') {
                 upsertHistoryItem(data.session_id || data.chat_id || flashSessionId, historyTitle);
             }
-            if (thinking) thinking.remove();
+            collapseInlineExecution(data?.telemetry);
             clearExecTimers();
             hideCardStatus();
 
             if (!res.ok || data.status === 'error') {
                 completeExecTile(currentTile, 'Orchestration stopped: ' + (data.error || 'Server error'));
-                if (isFirstMessage) {
-                    attachedFiles = [];
-                    renderAttachments();
-                    promptInput.value = '';
-                    promptInput.style.height = 'auto';
-                    activateChat();
-                    appendUserMsg(pendingText, pendingFiles);
-                }
                 appendError(data.error || 'Orchestration error.');
                 rightPanelIdle();
             } else {
                 // PROMPT RESULT IS READY -> MAKE THE CHATBOX GO DOWN NOW!
-                if (isFirstMessage) {
-                    attachedFiles = [];
-                    renderAttachments();
-                    promptInput.value = '';
-                    promptInput.style.height = 'auto';
-                    activateChat();
-                    appendUserMsg(pendingText, pendingFiles);
-                }
 
                 appendSageReply(data.answer, data.telemetry);
                 rightPanelDone();
@@ -3277,37 +3631,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         } catch (err) {
-            if (thinking) thinking.remove();
+            collapseInlineExecution(null);
             clearExecTimers();
             hideCardStatus();
             if (err.name === 'AbortError') {
                 completeExecTile(currentTile, 'Execution halted by user.');
             } else {
                 completeExecTile(currentTile, 'Network error during request.');
-                if (isFirstMessage) {
-                    attachedFiles = [];
-                    renderAttachments();
-                    promptInput.value = '';
-                    promptInput.style.height = 'auto';
-                    activateChat();
-                    appendUserMsg(pendingText, pendingFiles);
-                }
                 appendError('Network error: ' + err.message);
             }
             rightPanelIdle();
         } finally {
             isRunning = false;
+            requestRoleHint = '';
             currentAbortController = null;
             sendBtn.disabled = false;
+            flashModeBtn.disabled = false;
+            adeptModeBtn.disabled = false;
             promptInput.disabled = false;
             stopBtn.style.display = 'none';
             promptInput.focus();
         }
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // MESSAGE BUILDERS
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function appendUserMsg(text, files) {
         const msg = document.createElement('div');
         msg.className = 'chat-msg user fade-in';
@@ -3352,17 +3701,23 @@ document.addEventListener('DOMContentLoaded', () => {
         hdr.textContent = 'SAGE' + t;
         const bub = document.createElement('div'); bub.className = 'msg-bub';
         bub.innerHTML = fmtMd(answer);
-        msg.appendChild(hdr); msg.appendChild(bub);
+        const actions = document.createElement('div'); actions.className = 'sage-message-actions';
+        const exportPdfBtn = document.createElement('button');
+        exportPdfBtn.type = 'button';
+        exportPdfBtn.className = 'export-pdf-btn';
+        exportPdfBtn.innerHTML = '<span>PDF</span> Export as PDF';
+        exportPdfBtn.addEventListener('click', () => exportReplyToCanvas(answer, exportPdfBtn));
+        actions.appendChild(exportPdfBtn);
+        msg.appendChild(hdr); msg.appendChild(bub); msg.appendChild(actions);
         chatMessages.appendChild(msg);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
-
     function appendError(err) {
         let safeError = String(err || 'Unknown error').trim();
         if (/<(?:!doctype|html|head|body)\b/i.test(safeError)) {
             safeError = 'The remote model endpoint returned an HTML error page. Check the GPU bridge or tunnel in Settings > Flash Runtime.';
         }
-        if (safeError.length > 900) safeError = safeError.slice(0, 900) + '…';
+        if (safeError.length > 900) safeError = safeError.slice(0, 900) + 'â€¦';
         const msg = document.createElement('div'); msg.className = 'chat-msg sage fade-in';
         const hdr = document.createElement('div'); hdr.className = 'msg-hdr'; hdr.style.color = '#c0392b'; hdr.textContent = 'SAGE Error';
         const bub = document.createElement('div'); bub.className = 'msg-bub'; bub.style.borderColor = '#f5b7b1';
@@ -3372,29 +3727,34 @@ document.addEventListener('DOMContentLoaded', () => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // HELPERS
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     function esc(t) {
         return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
     function fmtMd(text) {
         if (!text) return '';
-        let f = esc(text);
-        f = f.replace(/```([a-zA-Z0-9_]*)\n([\s\S]*?)```/g, (_, lang, code) => '<pre><code>' + code + '</code></pre>');
-        f = f.replace(/`([^`]+)`/g, '<code>$1</code>');
+        const codeBlocks = [];
+        let f = esc(text).replace(/```([a-zA-Z0-9_+#.-]*)\s*\r?\n([\s\S]*?)```/g, (_, lang, code) => {
+            const token = `@@SAGE_CODE_BLOCK_${codeBlocks.length}@@`;
+            codeBlocks.push(`<pre class="sage-code-block"${lang ? ` data-language="${lang}"` : ''}><code>${code.replace(/^\r?\n|\r?\n$/g, '')}</code></pre>`);
+            return token;
+        });
+        f = f.replace(/`([^`\r\n]+)`/g, '<code class="sage-inline-code">$1</code>');
         f = f.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
         f = f.replace(/^### (.*$)/gim, '<h3>$1</h3>');
         f = f.replace(/^## (.*$)/gim,  '<h2>$1</h2>');
         f = f.replace(/^# (.*$)/gim,   '<h1>$1</h1>');
-        f = f.replace(/\n/g, '<br>');
-        f = f.replace(/<pre><code[\s\S]*?<\/code><\/pre>/g, m => m.replace(/<br>/g, '\n'));
+        f = f.replace(/\r?\n/g, '<br>');
+        codeBlocks.forEach((block, index) => {
+            f = f.replace(`@@SAGE_CODE_BLOCK_${index}@@`, block);
+        });
         return f;
     }
-
-    // ══════════════════════════════════════════════════
-    // SAGE MEMORY VAULT CONTROLLER — REAL BACKEND INTEGRATION
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // SAGE MEMORY VAULT CONTROLLER â€” REAL BACKEND INTEGRATION
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     let mvMemories = [];
     let mvDerivedMemories = [];
     let mvRecentMessages = [];
@@ -3453,7 +3813,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ── Live Backend API Fetchers ────────────────────
+    // â”€â”€ Live Backend API Fetchers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function fetchMemoryStatus() {
         try {
             const res = await fetch('/api/memory/status');
@@ -3465,7 +3825,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (dbPillText && data.database) {
                 const engine = (data.database.engine || 'SQLite').toUpperCase();
                 const state = data.database.status === 'connected' ? 'Active' : 'Offline';
-                dbPillText.textContent = `${engine} · ${state}`;
+                dbPillText.textContent = `${engine} Â· ${state}`;
             }
 
             // Vector Index status pill
@@ -3475,7 +3835,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const status = data.vector_index.status || 'Ready';
                 const hotCount = data.vector_index.hot_vectors || 0;
                 const coldCount = data.vector_index.cold_vectors || 0;
-                chromaText.textContent = `${eng} · ${status} (${hotCount + coldCount} vec)`;
+                chromaText.textContent = `${eng} Â· ${status} (${hotCount + coldCount} vec)`;
             }
 
             // Embedding pill
@@ -3836,7 +4196,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCurrentView();
     }
 
-    // ── Global Helper Methods for Inline Card Events ──
+    // â”€â”€ Global Helper Methods for Inline Card Events â”€â”€
     window.mvStartEdit = function(id) {
         mvActiveEditingId = id;
         renderCurrentView();
@@ -4212,9 +4572,38 @@ document.addEventListener('DOMContentLoaded', () => {
         refreshMemoryVaultData();
     }
 
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // INITIAL IDLE STATE
-    // ══════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     clearExecTiles();
     rightPanelIdle();
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

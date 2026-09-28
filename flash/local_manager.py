@@ -165,14 +165,17 @@ class LocalFlashManager:
 
     def status(self) -> Dict[str, Any]:
         mock = os.environ.get("SAGE_MOCK_MODE", "0") == "1"
-        return {
-            role: {
+        result: Dict[str, Any] = {}
+        for role, server in self._servers.items():
+            running = mock or server.running
+            result[role] = {
                 "port": server.port,
-                "running": mock or server.running,
-                "healthy": mock or server.healthy(),
+                "running": running,
+                # A stopped managed process cannot be healthy. Avoid three
+                # sequential network timeouts during every UI status refresh.
+                "healthy": mock or (running and server.healthy()),
             }
-            for role, server in self._servers.items()
-        }
+        return result
 
 
 local_flash_manager = LocalFlashManager()
