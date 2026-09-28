@@ -1,54 +1,69 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SAGE — Local Multi-Model Agent</title>
-    <meta name="description" content="SAGE — Sequential Multi-Model Local Agent Orchestrator.">
+    <title>SAGE â€” Local Multi-Model Agent</title>
+    <meta name="description" content="SAGE â€” Sequential Multi-Model Local Agent Orchestrator.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=integrated-runtime-3">
+    <link rel="stylesheet" href="/static/showcase/style.css?v=adept-ui-14">
 </head>
 <body>
 <div class="app-shell">
 
-    <!-- ════ LEFT SIDEBAR REVEAL BUTTON (fixed, shown when collapsed) ════ -->
+    <!-- â•â•â•â• LEFT SIDEBAR REVEAL BUTTON (fixed, shown when collapsed) â•â•â•â• -->
     <button class="reveal-btn reveal-left" id="openLeftBtn" title="Open sidebar">
-        <img src="/static/sage-logo.png" class="reveal-logo-img" alt="SAGE Logo">
+        <img src="/static/showcase/sage-logo.png" class="reveal-logo-img" alt="SAGE Logo">
     </button>
 
-    <!-- ════════════════════ LEFT SIDEBAR ════════════════════ -->
+    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• LEFT SIDEBAR â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
     <aside class="sidebar-left" id="sidebarLeft">
 
         <!-- Brand header -->
         <div class="sidebar-header">
             <div class="brand-mark">
-                <img src="/static/sage-logo.png" class="brand-logo-img" alt="SAGE Logo" title="SAGE">
+                <img src="/static/showcase/sage-logo.png" class="brand-logo-img" alt="SAGE Logo" title="SAGE">
             </div>
             <button class="icon-btn" id="closeLeftBtn" title="Collapse">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
             </button>
         </div>
 
-        <!-- Sidebar scrollable body -->
-        <div class="sidebar-body">
+        <!-- Sidebar navigation and locally scrolling conversations -->
+        <div class="sidebar-body sidebar-dashboard">
             <button class="new-chat-btn" id="newChatBtn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New Chat
+                New conversation
             </button>
 
-            <div class="sidebar-search">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <input type="text" id="searchInput" placeholder="Search conversations">
+            <section class="sidebar-history-region">
+                <div class="sec-label">RECENT</div>
+                <nav class="history-list" id="historyList" aria-label="Recent conversations">
+                    <!-- Populated from /api/chats -->
+                </nav>
+            </section>
+
+            <section class="sidebar-library">
+                <div class="sec-label">LIBRARY</div>
+                <button class="sidebar-library-item" type="button" data-library-tab="artifacts" data-library-kind="documents">
+                    <span class="sidebar-library-icon">▧</span><span>Documents</span><b id="sidebarDocumentCount">0</b>
+                </button>
+                <button class="sidebar-library-item" type="button" data-library-tab="artifacts" data-library-kind="artifacts">
+                    <span class="sidebar-library-icon">▱</span><span>Artifacts</span><b id="sidebarArtifactCount">0</b>
+                </button>
+                <button class="sidebar-library-item" type="button" data-library-tab="memory" data-library-kind="memory">
+                    <span class="sidebar-library-icon">▤</span><span>Manage memory</span><b id="sidebarMemoryCount">0</b>
+                </button>
+            </section>
+
+            <div class="sidebar-workspace-card">
+                <strong>Local workspace</strong>
+                <div class="sidebar-capacity"><i id="sidebarCapacityBar"></i></div>
+                <small>Context capacity · <span id="sidebarCapacityLabel">31%</span></small>
             </div>
-
-            <div class="sec-label">HISTORY</div>
-            <nav class="history-list" id="historyList">
-                <!-- Populated from /api/chats -->
-            </nav>
         </div>
-
         <!-- Settings at bottom -->
         <div class="sidebar-foot">
             <button class="settings-trigger" id="settingsBtn" type="button">
@@ -103,11 +118,6 @@
                             <option value="1.0">1.0</option>
                         </select>
                     </div>
-                    <button class="flash-open-btn" id="openFlashRuntimeBtn" type="button">
-                        <span class="flash-open-dot"></span>
-                        <span><strong>Flash runtime</strong><small id="flashSettingsSummary">Local RTX / remote GPU setup</small></span>
-                        <span aria-hidden="true">&rarr;</span>
-                    </button>
                 </div>
                 <div class="sp-group">
                     <div class="sp-group-label">PRIVACY</div>
@@ -127,7 +137,7 @@
         <div class="drag-handle drag-left" id="leftDragHandle"></div>
     </aside>
 
-    <!-- ════════════════════ CHAT MAIN ════════════════════ -->
+    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CHAT MAIN â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
     <main class="chat-main" id="chatMain" data-state="initial">
         <!-- Interactive Threads WebGL Background for Chat Tab -->
         <canvas class="chat-threads-canvas" id="chatThreadsCanvas"></canvas>
@@ -136,9 +146,11 @@
         <div class="tabs-wrapper">
             <nav class="chat-tabs" id="chatTabs">
                 <button class="tab-btn active" data-tab="chat">Chat</button>
-                <button class="tab-btn" data-tab="artifacts">Artifacts</button>
+                <button class="top-runtime-btn" id="openFlashRuntimeBtn" type="button"><span class="flash-open-dot"></span>Runtime</button>
+                <button class="tab-btn sidebar-relocated" data-tab="artifacts">Artifacts</button>
                 <button class="tab-btn" data-tab="tools-models">Tools &amp; Models</button>
-                <button class="tab-btn" data-tab="memory">Memory</button>
+                <button class="tab-btn" data-tab="canvas">Canvas</button>
+                <button class="tab-btn sidebar-relocated" data-tab="memory">Memory</button>
             </nav>
         </div>
 
@@ -148,7 +160,7 @@
             <!-- Welcome overlay (initial state) -->
             <div class="welcome-overlay" id="welcomeOverlay">
                 <div class="welcome-icon">
-                    <img src="/static/sage-logo.png" class="welcome-logo-img" alt="SAGE Logo">
+                    <img src="/static/showcase/sage-logo.png" class="welcome-logo-img" alt="SAGE Logo">
                 </div>
                 <h1 class="welcome-heading">How may I help you</h1>
             </div>
@@ -184,7 +196,7 @@
                             </button>
                             <div class="chat-mode-switch" aria-label="SAGE mode">
                                 <button class="chat-mode-btn active" id="flashModeBtn" type="button">FLASH</button>
-                                <button class="chat-mode-btn deep-focus" id="reasoningModeBtn" type="button">DEEP FOCUS</button>
+                                <button class="chat-mode-btn adept" id="adeptModeBtn" type="button">ADEPT</button>
                             </div>
                         </div>
                         <div class="it-right">
@@ -205,7 +217,25 @@
             </div>
         </div>
 
-        <!-- ════════════════════ 3D ARTIFACT GRAPH VIEW ════════════════════ -->
+        <!-- PDF generation and preview canvas -->
+        <section class="pdf-canvas-view" id="pdfCanvasView" style="display:none;">
+            <header class="pdf-canvas-header">
+                <div><span>DOCUMENT CANVAS</span><h2 id="pdfCanvasTitle">Generated PDF</h2></div>
+                <div class="pdf-canvas-actions">
+                    <span id="pdfCanvasPageLabel">No document</span>
+                    <button id="pdfCanvasDownloadBtn" type="button" disabled>Download PDF</button>
+                </div>
+            </header>
+            <div class="pdf-canvas-stage" id="pdfCanvasStage">
+                <div class="pdf-canvas-empty" id="pdfCanvasEmpty">
+                    <div class="pdf-canvas-empty-icon">PDF</div>
+                    <h3>Your generated document will appear here</h3>
+                    <p>When SAGE creates a PDF, Canvas will render it in this workspace for review and download.</p>
+                </div>
+                <iframe id="pdfCanvasFrame" title="Generated PDF preview" hidden></iframe>
+            </div>
+        </section>
+        <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• 3D ARTIFACT GRAPH VIEW â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
         <div class="artifacts-view" id="artifactsView" style="display: none;">
             <!-- Top HUD Bar: Search, Category Filters, Options -->
             <div class="graph-hud-top">
@@ -270,7 +300,7 @@
                 </div>
 
                 <div class="graph-hint">
-                    <span>Double-click node to preview document · Drag to rotate · Scroll to zoom</span>
+                    <span>Double-click node to preview document Â· Drag to rotate Â· Scroll to zoom</span>
                 </div>
             </div>
 
@@ -288,14 +318,14 @@
             </div>
         </div>
 
-        <!-- ════════════════════ TOOLS & MODELS VIEW (Whiteboard Architecture) ════════════════════ -->
+        <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• TOOLS & MODELS VIEW (Whiteboard Architecture) â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
         <div class="tools-models-view" id="toolsModelsView" style="display: none;">
             
             <!-- Scrollable Content Body -->
             <div class="tm-content-scroll">
                 <div class="tm-container">
 
-                    <!-- ═══════════ UPPER SECTION: TOOLS (LEFT) | MODELS (RIGHT) ═══════════ -->
+                    <!-- â•â•â•â•â•â•â•â•â•â•â• UPPER SECTION: TOOLS (LEFT) | MODELS (RIGHT) â•â•â•â•â•â•â•â•â•â•â• -->
                     <div class="tm-split-panel">
                         
                         <!-- LEFT PANEL: TOOLS -->
@@ -481,10 +511,10 @@
 
                     </div>
 
-                    <!-- ═══════════ FULL-WIDTH DIVIDER LINE ═══════════ -->
+                    <!-- â•â•â•â•â•â•â•â•â•â•â• FULL-WIDTH DIVIDER LINE â•â•â•â•â•â•â•â•â•â•â• -->
                     <div class="tm-divider-line"></div>
 
-                    <!-- ═══════════ LOWER SECTION: TOP RECOMMENDATIONS ═══════════ -->
+                    <!-- â•â•â•â•â•â•â•â•â•â•â• LOWER SECTION: TOP RECOMMENDATIONS â•â•â•â•â•â•â•â•â•â•â• -->
                     <div class="tm-recommendations-section" id="tmRecommendationsSection">
                         
                         <div class="tm-rec-top-row">
@@ -520,7 +550,7 @@
 
         </div>
 
-        <!-- ════════════════════ MEMORY VAULT VIEW ════════════════════ -->
+        <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• MEMORY VAULT VIEW â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
         <div class="memory-vault-view" id="memoryVaultView" style="display: none;">
             
             <!-- Top Header & Filter Bar (Spreads across full width) -->
@@ -558,11 +588,11 @@
                 <div class="mv-status-group">
                     <div class="mv-status-item">
                         <span class="mv-status-label">Database:</span>
-                        <span class="mv-status-pill pill-db" id="mvDbStatusPill"><span class="mv-dot green"></span><span id="mvDbStatusText">SQLite · Active</span></span>
+                        <span class="mv-status-pill pill-db" id="mvDbStatusPill"><span class="mv-dot green"></span><span id="mvDbStatusText">SQLite Â· Active</span></span>
                     </div>
                     <div class="mv-status-item">
                         <span class="mv-status-label">Vector Index:</span>
-                        <span class="mv-status-pill pill-chroma" id="mvChromaStatusPill"><span class="mv-dot green"></span><span id="mvChromaStatusText">Chroma · Ready</span></span>
+                        <span class="mv-status-pill pill-chroma" id="mvChromaStatusPill"><span class="mv-dot green"></span><span id="mvChromaStatusText">Chroma Â· Ready</span></span>
                     </div>
                     <div class="mv-status-item">
                         <span class="mv-status-label">Embedding:</span>
@@ -594,7 +624,7 @@
             <!-- Full-Screen Dual Board Split (Semantic Hot & Cold) -->
             <div class="mv-dual-board" id="mvViewVault">
                 
-                <!-- ════════ LEFT COLUMN: HOT MEMORY (SESSION) ════════ -->
+                <!-- â•â•â•â•â•â•â•â• LEFT COLUMN: HOT MEMORY (SESSION) â•â•â•â•â•â•â•â• -->
                 <div class="mv-tier-col mv-col-hot">
                     <div class="mv-tier-header">
                         <div class="mv-tier-title-group">
@@ -638,7 +668,7 @@
                     </div>
                 </div>
 
-                <!-- ════════ RIGHT COLUMN: COLD MEMORY (PERSISTENT) ════════ -->
+                <!-- â•â•â•â•â•â•â•â• RIGHT COLUMN: COLD MEMORY (PERSISTENT) â•â•â•â•â•â•â•â• -->
                 <div class="mv-tier-col mv-col-cold">
                     <div class="mv-tier-header">
                         <div class="mv-tier-title-group">
@@ -688,7 +718,7 @@
 
             </div>
 
-            <!-- ════════ RECENT CONVERSATION CONTEXT VIEW ════════ -->
+            <!-- â•â•â•â•â•â•â•â• RECENT CONVERSATION CONTEXT VIEW â•â•â•â•â•â•â•â• -->
             <div class="mv-section-view" id="mvViewRecent" style="display: none;">
                 <div class="mv-section-header">
                     <div class="mv-section-title-wrap">
@@ -697,7 +727,7 @@
                             <span>CONVERSATION LEDGER</span>
                         </div>
                         <h3 class="mv-section-title">Recent Conversation Context</h3>
-                        <p class="mv-section-desc">Chronological window of the latest messages injected into model prompt. <strong>Recent conversation context — chronological, not semantic memory.</strong></p>
+                        <p class="mv-section-desc">Chronological window of the latest messages injected into model prompt. <strong>Recent conversation context â€” chronological, not semantic memory.</strong></p>
                     </div>
                     <div class="mv-tier-count-pill">
                         <span class="mv-count-number" id="mvRecentMsgCount">0</span>
@@ -709,7 +739,7 @@
                 </div>
             </div>
 
-            <!-- ════════ DERIVED / COMPRESSED MEMORY VIEW ════════ -->
+            <!-- â•â•â•â•â•â•â•â• DERIVED / COMPRESSED MEMORY VIEW â•â•â•â•â•â•â•â• -->
             <div class="mv-section-view" id="mvViewDerived" style="display: none;">
                 <div class="mv-section-header">
                     <div class="mv-section-title-wrap">
@@ -730,7 +760,7 @@
                 </div>
             </div>
 
-            <!-- ════════ OPERATIONAL ACTIVITY LOG VIEW ════════ -->
+            <!-- â•â•â•â•â•â•â•â• OPERATIONAL ACTIVITY LOG VIEW â•â•â•â•â•â•â•â• -->
             <div class="mv-section-view" id="mvViewActivity" style="display: none;">
                 <div class="mv-section-header">
                     <div class="mv-section-title-wrap">
@@ -759,61 +789,67 @@
         </div>
     </main>
 
-    <!-- ════════════════════ RIGHT PANEL ════════════════════ -->
-    <aside class="panel-right collapsed" id="panelRight">
-        <!-- Drag resize handle -->
+    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• RIGHT PANEL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+    <aside class="panel-right collapsed intelligence-rail" id="panelRight">
         <div class="drag-handle drag-right" id="rightDragHandle"></div>
-
-        <!-- Panel header with collapse -->
-        <div class="panel-header">
-            <button class="net-status-pill" id="netStatusBtn" title="Check connection status & data isolation">
-                <span class="net-dot"></span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                <span>Air-Gapped · Zero Leak</span>
-            </button>
-            <button class="observer-launch-btn" id="observerLaunchBtn" title="Open live SAGE Observer">
-                <span class="observer-live-dot"></span><span>Observer</span><b id="observerEventCount">0</b>
-            </button>
-            <button class="icon-btn" id="closeRightBtn" title="Collapse">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
+        <div class="intelligence-head">
+            <div>
+                <span class="intelligence-kicker">LIVE INTELLIGENCE</span>
+                <h2>Execution</h2>
+            </div>
+            <div class="intelligence-head-actions">
+                <span class="intelligence-timer" id="execTimer">0.0 s</span>
+                <button class="icon-btn" id="closeRightBtn" title="Collapse" aria-label="Collapse execution panel">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+            </div>
         </div>
 
-        <!-- Scrollable panel content -->
-        <div class="panel-scroll" id="panelScroll">
-            <div class="panel-sec exec-panel-sec">
-                <div class="panel-sec-head">
-                    <div class="panel-section-title">Live progress</div>
-                    <div class="exec-badge" id="execBadge">
-                        <span class="exec-dot" id="execStatusDot"></span>
-                        <span id="execStatusText">Idle</span>
-                    </div>
-                </div>
-                <div class="exec-flow-guide" aria-label="Steps run from top to bottom">
-                    <span class="exec-flow-arrow">1 <i></i> 2 <i></i> 3</span>
-                    <span>Runs from top to bottom</span>
-                </div>
+        <div class="panel-scroll intelligence-scroll" id="panelScroll">
+            <section class="intelligence-graph" aria-label="Active execution system">
+                <svg aria-hidden="true" viewBox="0 0 280 185" preserveAspectRatio="none">
+                    <line x1="45" y1="35" x2="140" y2="85"/><line x1="45" y1="150" x2="140" y2="85"/>
+                    <line x1="235" y1="35" x2="140" y2="85"/><line x1="235" y1="150" x2="140" y2="85"/>
+                    <line class="adept-connector" x1="140" y1="158" x2="140" y2="85"/>
+                </svg>
+                <span class="intelligence-node context" data-intel-node="context">Context</span>
+                <span class="intelligence-node memory" data-intel-node="memory">Memory</span>
+                <span class="intelligence-node bge" data-intel-node="document-rag">BGE-M3</span>
+                <span class="intelligence-node vision" data-intel-node="vision">Vision</span>
+                <span class="intelligence-node coder adept-only" data-intel-node="coder">Coder</span>
+                <span class="intelligence-node agent" data-intel-node="agent">Agent</span>
+            </section>
 
-                <!-- Execution tiles stream wrapper with top/bottom blur masks -->
+            <section class="intelligence-metrics" aria-label="Execution metrics">
+                <div class="intelligence-metric"><span>CONTEXT</span><strong id="execContextMetric">—</strong></div>
+                <div class="intelligence-metric"><span>EVIDENCE</span><strong id="execEvidenceMetric">—</strong></div>
+                <div class="intelligence-metric"><span>DOCUMENTS</span><strong id="execDocumentsMetric">0 active</strong></div>
+                <div class="intelligence-metric"><span>MEMORY</span><strong id="execMemoryMetric">—</strong></div>
+            </section>
+
+            <section class="execution-trace">
+                <div class="execution-trace-head">
+                    <span>EXECUTION TRACE</span>
+                    <button id="observerLaunchBtn" type="button">Open inspector <b id="observerEventCount">0</b></button>
+                </div>
+                <div class="exec-badge" id="execBadge" aria-live="polite">
+                    <span class="exec-dot" id="execStatusDot"></span><span id="execStatusText">Idle</span>
+                </div>
                 <div class="exec-stream-wrapper" id="execStreamWrapper">
                     <div class="edge-blur-top" id="edgeBlurTop"></div>
                     <div class="exec-tiles-track" id="execTilesTrack">
-                        <!-- Empty state when no tasks are running -->
                         <div class="exec-empty-state" id="execEmptyState">
-                            <div class="ees-icon">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                            </div>
+                            <div class="ees-icon">{ }</div>
                             <div class="ees-title">Ready when you are</div>
-                            <div class="ees-desc">Send a message to see SAGE's progress here.</div>
+                            <div class="ees-desc">Execution steps will appear here as SAGE works.</div>
                         </div>
                     </div>
                     <div class="edge-blur-bottom" id="edgeBlurBottom"></div>
                 </div>
-            </div>
+            </section>
         </div>
     </aside>
-
-    <!-- ════ RIGHT PANEL REVEAL BUTTON ════ -->
+    <!-- â•â•â•â• RIGHT PANEL REVEAL BUTTON â•â•â•â• -->
     <button class="reveal-btn reveal-right show" id="openRightBtn" title="Open panel">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
@@ -832,7 +868,7 @@
         <div class="nsc-body">
             <div class="nsc-badge">
                 <span class="nsc-pulse-dot"></span>
-                <span>100% LOCAL · ZERO LEAKAGE</span>
+                <span>100% LOCAL Â· ZERO LEAKAGE</span>
             </div>
             <p class="nsc-desc">
                 All agent steps, model reasoning, and attached documents run exclusively on your local machine.
@@ -864,7 +900,7 @@
 
 </div>
 
-<!-- ════════════════════ IN-SITE DOCUMENT PREVIEW MODAL ════════════════════ -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• IN-SITE DOCUMENT PREVIEW MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <!-- Flash Runtime Control Center: intentionally spacious for deep configuration -->
 <div class="flash-runtime-modal" id="flashRuntimeModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="flashRuntimeTitle">
     <div class="flash-runtime-backdrop" id="flashRuntimeBackdrop"></div>
@@ -956,7 +992,7 @@
 <!-- Live Observer: compact summary plus expandable full execution inspector -->
 <div class="observer-popover" id="observerPopover" hidden>
     <div class="observer-popover-head"><strong>Live Observer</strong><button id="observerExpandBtn" type="button">Expand</button></div>
-    <div class="observer-popover-status" id="observerPopoverStatus">Waiting for a run…</div>
+    <div class="observer-popover-status" id="observerPopoverStatus">Waiting for a runâ€¦</div>
     <div class="observer-mini-events" id="observerMiniEvents"></div>
 </div>
 <div class="observer-modal" id="observerModal" hidden aria-hidden="true" role="dialog" aria-labelledby="observerTitle">
@@ -1021,7 +1057,7 @@
     </div>
 </div>
 
-<!-- ════════════════════ MODEL DETAILS MODAL ════════════════════ -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• MODEL DETAILS MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <div class="tm-modal" id="modelDetailsModal" style="display:none;" aria-hidden="true" role="dialog" aria-labelledby="tmModalTitle">
     <div class="tm-modal-backdrop" id="tmModalBackdrop"></div>
     <div class="tm-modal-dialog">
@@ -1039,15 +1075,33 @@
         <div class="tm-modal-footer">
             <a href="#" target="_blank" rel="noopener noreferrer" class="tm-modal-btn-hf" id="tmModalHfBtn">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                <span>View on Hugging Face ↗</span>
+                <span>View on Hugging Face â†—</span>
             </a>
             <button class="tm-modal-btn-close" id="tmModalCloseFooterBtn">Close</button>
         </div>
     </div>
 </div>
 
-<script src="/static/three.min.js" onerror="this.onerror=null;this.src='three.min.js'"></script>
-<script src="/static/artifact_graph.js?v=integrated-runtime-3" onerror="this.onerror=null;this.src='artifact_graph.js?v=integrated-runtime-3'"></script>
-<script src="/static/app.js?v=integrated-runtime-3" onerror="this.onerror=null;this.src='app.js?v=integrated-runtime-3'"></script>
+<script src="/static/showcase/three.min.js" onerror="this.onerror=null;this.src='/static/showcase/three.min.js'"></script>
+<script src="/static/showcase/artifact_graph.js?v=adept-ui-1" onerror="this.onerror=null;this.src='/static/showcase/artifact_graph.js?v=adept-ui-1'"></script>
+<script src="/static/showcase/app.js?v=adept-ui-10" onerror="this.onerror=null;this.src='/static/showcase/app.js?v=adept-ui-10'"></script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

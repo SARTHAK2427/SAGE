@@ -30,6 +30,7 @@ def global_memory_identity(content: str) -> Optional[Tuple[str, str]]:
 
     name_patterns = (
         r"\buser(?:'s)?\s+name\s+is\s+([^.,;\n]+)",
+        r"\buser(?:'s)?\s+identifier\s+is\s+([^.,;\n]+)",
         r"\bthe\s+user\s+(?:is\s+named|identified\s+themselves\s+as|identified\s+themself\s+as)\s+([^.,;\n]+)",
         r"\buser\s+identity\s*:\s*([^,;\n]+)",
     )

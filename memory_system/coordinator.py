@@ -63,6 +63,19 @@ class MemoryCoordinator:
         text = "\n".join(f"{m.get('role','unknown').upper()}: {m.get('content','')}" for m in flat)
         return {"messages": flat, "text": text, "turn_count": len(selected), "token_estimate": used}
 
+    @staticmethod
+    def _curator_context(messages: List[Dict[str, Any]], assistant_message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return the bounded ledger window ending at this completed turn."""
+        assistant_id = str(assistant_message.get("msg_id") or "")
+        end = len(messages)
+        if assistant_id:
+            for index, message in enumerate(messages):
+                if str(message.get("msg_id") or "") == assistant_id:
+                    end = index + 1
+                    break
+        limit = max(1, int(config.SAGE_RECENT_CHAT_MAX_MESSAGES))
+        return messages[max(0, end - limit):end]
+
     def search(self, *, query: str, user_id: str, chat_id: str, scope: str = "both", limit: int = 6, run_id: str | None = None) -> Dict[str, Any]:
         observer.emit(run_id or chat_id, "memory", "semantic_search", "started", "Searching scoped memory",
                       {"query": query, "scope": scope, "chat_id": chat_id, "limit": limit})
@@ -141,11 +154,13 @@ class MemoryCoordinator:
         # Examine the current chat's recent backlog. Idempotency makes repeat
         # scheduling a no-op, while this repairs stable facts from turns made
         # before the curator endpoint was available or this feature existed.
-        completed = self._completed_turns(sage_memory.get_messages(chat_id))
+        messages = sage_memory.get_messages(chat_id)
+        completed = self._completed_turns(messages)
         for hot_user, hot_assistant in completed[-config.FLASH_MEMORY_QUEUE_SIZE:]:
             global_job = memory_worker.schedule_turn(
                 session_id=chat_id, user_id=user_id,
                 user_message=hot_user, assistant_message=hot_assistant,
+                recent_context=self._curator_context(messages, hot_assistant),
                 run_id=run_id or chat_id, job_type=memory_worker.GLOBAL_EXTRACT,
             )
             if global_job:
@@ -179,11 +194,13 @@ class MemoryCoordinator:
             chat_id = str(chat.get("chat_id") or "")
             if not chat_id:
                 continue
-            completed = self._completed_turns(sage_memory.get_messages(chat_id))
+            messages = sage_memory.get_messages(chat_id)
+            completed = self._completed_turns(messages)
             for user_message, assistant_message in completed[-max(1, turns_per_chat):]:
                 job_id = memory_worker.schedule_turn(
                     session_id=chat_id, user_id=user_id,
                     user_message=user_message, assistant_message=assistant_message,
+                    recent_context=self._curator_context(messages, assistant_message),
                     run_id=run_id, job_type=memory_worker.GLOBAL_EXTRACT,
                 )
                 if job_id:

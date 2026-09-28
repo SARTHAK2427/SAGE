@@ -68,7 +68,9 @@ class IndexOutbox:
                         )
         finally:
             conn.close()
-        self.process(event_id)
+        # Foreground chat and memory-curation paths only persist the durable
+        # intent.  BGE/Chroma work is performed by the separate low-priority
+        # index worker so a first model load cannot stall response delivery.
         return event_id
 
     def _set_status(self, event_id: str, status: str, error: str | None = None) -> None:

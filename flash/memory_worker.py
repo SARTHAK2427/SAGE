@@ -14,7 +14,7 @@ from core.observer import observer
 from flash.runtime_config import runtime_config
 from flash.transport import flash_transport
 from memory_system.job_store import memory_job_store
-from memory_system.global_identity import global_memory_identity, same_global_memory
+from memory_system.global_identity import global_memory_identity, normalized_text, same_global_memory
 from memory_system.quality import is_valid_memory, memory_rejection_reason
 from sage_memory import ALLOWED_CATEGORIES, sage_memory
 
@@ -41,7 +41,8 @@ class FlashMemoryWorker:
 
     def schedule_turn(self, *, session_id: str, user_id: str, user_message: Dict[str, Any],
                       assistant_message: Dict[str, Any], run_id: str,
-                      job_type: str = COLD_COMPRESS) -> Optional[str]:
+                      job_type: str = COLD_COMPRESS,
+                      recent_context: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         if job_type not in {self.GLOBAL_EXTRACT, self.COLD_COMPRESS}:
             raise ValueError(f"Unsupported memory job type: {job_type}")
         if not config.SAGE_MEMORY_CURATOR_ENABLED or runtime_config.role("memory")["provider"] == "disabled":
@@ -53,13 +54,15 @@ class FlashMemoryWorker:
                 return None
         user_id_value = str(user_message.get("msg_id") or "")
         assistant_id = str(assistant_message.get("msg_id") or "")
-        key = f"{job_type}:{session_id}:{user_id_value}:{assistant_id}"
+        # v4 enforces grounded, canonical personal-identity Global writes.
+        key = f"v4:{job_type}:{session_id}:{user_id_value}:{assistant_id}"
         payload = {
             "session_id": session_id,
             "user_id": user_id,
             "run_id": run_id,
             "user_message": user_message,
             "assistant_message": assistant_message,
+            "recent_context": recent_context or [],
             "job_type": job_type,
         }
         job_id = memory_job_store.create(key=key, user_id=user_id, chat_id=session_id, payload=payload)
@@ -68,6 +71,7 @@ class FlashMemoryWorker:
         summary = "Queued immediate global memory extraction" if job_type == self.GLOBAL_EXTRACT else "Queued evicted turn for cold-memory compression"
         observer.emit(run_id, "memory-2b", "curation_queue", "queued", summary,
                       {"job_id": job_id, "job_type": job_type, "source_message_ids": [user_id_value, assistant_id],
+                       "context_message_count": len(recent_context or []),
                        "provider": runtime_config.role("memory").get("provider")})
         if not self._slots.acquire(blocking=False):
             memory_job_store.update(job_id, "queued", error="Worker queue is full; awaiting retry")
@@ -77,7 +81,7 @@ class FlashMemoryWorker:
         return job_id
 
     @staticmethod
-    def _parse(raw: str) -> List[Dict[str, Any]]:
+    def _parse(raw: str, expected_scope: Optional[str] = None) -> List[Dict[str, Any]]:
         parsed: Any = None
         for candidate in (raw, clean_json_string(raw)):
             try:
@@ -92,7 +96,10 @@ class FlashMemoryWorker:
             if not isinstance(item, dict):
                 continue
             content = str(item.get("content") or "").strip()
-            scope = str(item.get("scope") or "cold").lower()
+            scope = str(item.get("scope") or "cold").lower().strip()
+            parts = {part.strip() for part in scope.replace("|", "/").split("/") if part.strip()}
+            if expected_scope in {"cold", "global"} and expected_scope in parts:
+                scope = expected_scope
             category = str(item.get("category") or "summary").lower()
             if not content or scope not in {"cold", "global"} or category not in ALLOWED_CATEGORIES:
                 continue
@@ -110,10 +117,31 @@ class FlashMemoryWorker:
         return validated
 
     @staticmethod
-    def _chunks(user_text: str, assistant_text: str) -> List[str]:
-        combined = f"USER:\n{user_text}\n\nASSISTANT:\n{assistant_text}"
+    def _chunks(user_text: str, assistant_text: str, recent_context: List[Dict[str, Any]]) -> List[str]:
+        target = f"CURRENT COMPLETED TURN\nUSER:\n{user_text}\n\nASSISTANT:\n{assistant_text}"
+        context_lines = []
+        for message in recent_context[-max(1, int(config.SAGE_RECENT_CHAT_MAX_MESSAGES)):]:
+            role = str(message.get("role") or "unknown").upper()
+            content = str(message.get("content") or "").strip()
+            if content:
+                context_lines.append(f"{role}:\n{content}")
+        if context_lines:
+            combined = "RECENT CHAT CONTEXT (use only to resolve short user answers or corrections)\n" + "\n\n".join(context_lines) + "\n\n" + target
+        else:
+            combined = target
         size = max(2000, config.SAGE_MEMORY_CURATOR_CHUNK_CHARS)
         return [combined[i:i + size] for i in range(0, len(combined), size)] or [combined]
+
+    @staticmethod
+    def _global_identity_grounded(identity: tuple[str, str], payload: Dict[str, Any]) -> bool:
+        """Require an accepted Global value to appear in user-authored context."""
+        user_texts = [str((payload.get("user_message") or {}).get("content") or "")]
+        for message in payload.get("recent_context") or []:
+            if str(message.get("role") or "").lower() == "user":
+                user_texts.append(str(message.get("content") or ""))
+        evidence = normalized_text(" ".join(user_texts))
+        value = normalized_text(identity[1])
+        return bool(value and value in evidence)
 
     def _run(self, job_id: str, payload: Dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or payload["session_id"])
@@ -126,17 +154,24 @@ class FlashMemoryWorker:
             memory_job_store.update(job_id, "running")
             user_text = str(payload["user_message"].get("content") or "")
             assistant_text = str(payload["assistant_message"].get("content") or "")
-            chunks = self._chunks(user_text, assistant_text)
+            recent_context = payload.get("recent_context") if isinstance(payload.get("recent_context"), list) else []
+            chunks = self._chunks(user_text, assistant_text, recent_context)
             task_label = "global fact extraction" if job_type == self.GLOBAL_EXTRACT else "cold-memory compression"
             observer.emit(run_id, "memory-2b", "curation", "started", f"Background {task_label} started",
                           {"job_id": job_id, "job_type": job_type, "chunk_count": len(chunks),
-                           "input_chars": len(user_text) + len(assistant_text),
+                           "input_chars": sum(len(chunk) for chunk in chunks),
+                           "context_message_count": len(recent_context),
                            "provider": runtime_config.role("memory").get("provider")})
             prompt = (config.PROMPTS_DIR / "memory_curator_system.txt").read_text(encoding="utf-8")
             mode_instruction = (
-                "TASK MODE: GLOBAL EXTRACTION. This turn is still in Hot memory. Return only category=personal, scope=global records for stable personal identity or biographical information explicitly stated by the user (for example name, age, pronouns, or location). Do not store preferences, projects, instructions, device setup, events, or topical facts globally; they belong to chat-scoped Cold memory after eviction. Do not create a cold summary in this mode."
+                "MODE: GLOBAL. Return only scope=global and category=personal. "
+                "Write the scope exactly `global`; never use `cold/global` or `cold|global`. "
+                "Store only stable personal identity: name or age stated by USER. "
+                "Nearby USER messages may resolve a short answer or correction; do not infer beyond their combined explicit meaning. "
+                "Return no cold memory. Exclude preferences, projects, instructions, devices, events, and topical facts."
                 if job_type == self.GLOBAL_EXTRACT else
-                "TASK MODE: COLD COMPRESSION. This turn has just left the five-turn Hot window. Return only scope=cold records that preserve useful chat-specific episode context."
+                "MODE: COLD. Return only scope=cold. Preserve useful chat-specific episode context. "
+                "Return no global memory."
             )
             proposed: List[Dict[str, Any]] = []
             for index, chunk in enumerate(chunks):
@@ -152,7 +187,9 @@ class FlashMemoryWorker:
                                "provider": runtime_config.role("memory").get("provider")},
                               duration_ms=float(response.get("duration", 0)) * 1000)
                 allowed_scope = "global" if job_type == self.GLOBAL_EXTRACT else "cold"
-                proposed.extend(item for item in self._parse(str(response.get("content") or "")) if item["scope"] == allowed_scope)
+                proposed.extend(item for item in self._parse(
+                    str(response.get("content") or ""), expected_scope=allowed_scope,
+                ) if item["scope"] == allowed_scope)
 
             stored: List[Dict[str, Any]] = []
             with self._lock:
@@ -234,6 +271,18 @@ class FlashMemoryWorker:
                 seen.add(key)
                 if item["scope"] == "global":
                     candidate_identity = global_memory_identity(item["content"])
+                    if not candidate_identity:
+                        observer.emit(run_id, "memory-2b", "global_quality_rejection", "completed",
+                                      "Rejected non-identity global memory candidate",
+                                      {"job_id": job_id, "candidate": item["content"],
+                                       "reason": "not a supported personal identity"})
+                        continue
+                    if not self._global_identity_grounded(candidate_identity, payload):
+                        observer.emit(run_id, "memory-2b", "global_quality_rejection", "completed",
+                                      "Rejected ungrounded global memory candidate",
+                                      {"job_id": job_id, "candidate": item["content"],
+                                       "reason": "value not present in user-authored context"})
+                        continue
                     same_identity = None
                     same_slot = None
                     for memory in existing_global:

@@ -32,6 +32,7 @@ DATA_ROOT = Path(os.environ.get("SAGE_DATA_ROOT", str(BASE_DIR / "data"))).expan
 DOCUMENTS_ROOT = DATA_ROOT / "documents"
 MEMORY_ROOT = DATA_ROOT / "memory"
 RUNTIME_ROOT = DATA_ROOT / "runtime"
+ATTACHMENTS_ROOT = DATA_ROOT / "attachments"
 TEMP_DIR = Path(os.environ.get("SAGE_TEMP_ROOT", str(RUNTIME_ROOT))).expanduser().resolve()
 PROMPTS_DIR = BASE_DIR / "prompts"
 STATIC_DIR = BASE_DIR / "static"
@@ -60,6 +61,7 @@ SAGE_DATABASE_URL = (
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 (DOCUMENTS_ROOT).mkdir(parents=True, exist_ok=True)
 (MEMORY_ROOT).mkdir(parents=True, exist_ok=True)
+ATTACHMENTS_ROOT.mkdir(parents=True, exist_ok=True)
 (TEMP_DIR / "logs").mkdir(parents=True, exist_ok=True)
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -169,6 +171,8 @@ SAGE_RECENT_CHAT_BUDGET_TOKENS = int(os.environ.get("SAGE_RECENT_CHAT_BUDGET_TOK
 SAGE_MEMORY_RECALL_LIMIT = int(os.environ.get("SAGE_MEMORY_RECALL_LIMIT", "6"))
 SAGE_MEMORY_CURATOR_ENABLED = os.environ.get("SAGE_MEMORY_CURATOR_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 SAGE_MEMORY_CURATOR_CHUNK_CHARS = int(os.environ.get("SAGE_MEMORY_CURATOR_CHUNK_CHARS", "12000"))
+SAGE_INDEX_WORKER_ENABLED = os.environ.get("SAGE_INDEX_WORKER_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+SAGE_INDEX_WORKER_POLL_SECONDS = float(os.environ.get("SAGE_INDEX_WORKER_POLL_SECONDS", "1.0"))
 
 # ── Code Execution Sandbox ────────────────────────────────────────────────────
 # Docker is the ONLY backend. No subprocess/local-execution fallback.

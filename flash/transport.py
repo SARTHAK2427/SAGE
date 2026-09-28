@@ -25,6 +25,35 @@ def _origin(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _safe_http_error(response: httpx.Response) -> str:
+    """Convert remote failures to actionable text without leaking HTML pages."""
+    code = int(response.status_code)
+    if code == 530:
+        return (
+            "Cloudflare tunnel unavailable (HTTP 530). Restart the tunnel, then "
+            "apply its new URL in Settings > Flash Runtime."
+        )
+    if code in {502, 503, 504, 522, 524}:
+        return f"Remote model server unavailable (HTTP {code}). Check that the bridge and tunnel are running."
+    if code in {401, 403}:
+        return f"Authentication failed (HTTP {code}). Check the runtime API key."
+    if code == 404:
+        return "Model API route not found (HTTP 404). Use the bridge root URL."
+    try:
+        body = response.json()
+        detail = body.get("error") if isinstance(body, dict) else None
+        if isinstance(detail, dict):
+            detail = detail.get("message") or detail.get("detail")
+        if not detail and isinstance(body, dict):
+            detail = body.get("detail") or body.get("message")
+        text = str(detail or "").strip()
+    except Exception:
+        text = ""
+    if text:
+        return f"Remote model server returned HTTP {code}: {text[:300]}"
+    return f"Remote model server returned HTTP {code}."
+
+
 class FlashTransport:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -207,7 +236,7 @@ class FlashTransport:
         if self._mock_enabled() and binding.get("provider") != "remote":
             if role == "gemma":
                 content = (
-                    '{"flash_case":"A","gemma_answer":'
+                    '{"final":true,"response":'
                     '"[Mock mode] SAGE Flash is running without local GGUF models. '
                     'Configure a remote GPU in Settings → Flash runtime, or install llama-server and the catalog models."}'
                 )
@@ -241,14 +270,16 @@ class FlashTransport:
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(f"Flash {role} endpoint returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
+            raise RuntimeError(f"Flash {role}: {_safe_http_error(exc.response)}") from exc
         except httpx.RequestError as exc:
             raise RuntimeError(f"Flash {role} endpoint unavailable at {base_url}: {exc}") from exc
 
         message = (data.get("choices") or [{}])[0].get("message") or {}
+        choice = (data.get("choices") or [{}])[0]
         return {
             "content": message.get("content") or "",
             "reasoning": message.get("reasoning_content") or "",
+            "finish_reason": choice.get("finish_reason") or "",
             "duration": time.perf_counter() - started,
             "usage": data.get("usage") or {},
             "timings": data.get("timings") or {},
@@ -340,7 +371,7 @@ class FlashTransport:
                     "role": role, "enabled": True, "healthy": False,
                     "provider": binding["provider"], "model_id": binding.get("model_id"),
                     "endpoint": base_url,
-                    "error": f"Inference probe failed (HTTP {exc.response.status_code}): {exc.response.text[:400]}",
+                    "error": f"Inference probe failed: {_safe_http_error(exc.response)}",
                 }
             except Exception as exc:
                 return {
@@ -382,12 +413,7 @@ class FlashTransport:
             }
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
-            if code in {401, 403}:
-                message = f"Authentication failed (HTTP {code}). Use the API KEY printed by Kaggle Cell 3, not the Hugging Face token."
-            elif code == 404:
-                message = "The endpoint has no /v1/models route (HTTP 404). Enter the bridge root URL, not a model-specific URL."
-            else:
-                message = f"Endpoint returned HTTP {code}: {exc.response.text[:500]}"
+            message = _safe_http_error(exc.response)
             return {"role": role, "enabled": True, "healthy": False, "error": message, "models": []}
         except httpx.RequestError as exc:
             return {
@@ -422,10 +448,7 @@ class FlashTransport:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            try:
-                detail = response.json().get("error", {}).get("message") or response.text
-            except Exception:
-                detail = response.text
+            detail = _safe_http_error(response)
             raise RuntimeError(
                 f"Bridge rejected {role} deployment (HTTP {response.status_code}): {str(detail)[:1200]}"
             ) from exc

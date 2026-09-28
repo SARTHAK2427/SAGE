@@ -1,0 +1,22 @@
+{
+  "global_memory.search": {
+    "purpose": "Find personal identity information shared across chats.",
+    "arguments": {"query": "string"}
+  },
+  "chat_ledger.search": {
+    "purpose": "Find earlier messages in the current chat.",
+    "arguments": {"query": "string", "max_results": "integer from 1 to 12"}
+  },
+  "document.search": {
+    "purpose": "Search text in document attachments belonging to the current chat.",
+    "arguments": {"query": "string", "attachment_ids": "array of allowed attachment ids"}
+  },
+  "document.image.inspect": {
+    "purpose": "Inspect one embedded image inside one document attachment by its one-based document image order.",
+    "arguments": {"attachment_ids": "array containing exactly one allowed document attachment id", "image_number": "one-based integer", "instruction": "visual task"}
+  },
+  "vision.inspect": {
+    "purpose": "Inspect pixels in image attachments belonging to this chat, including earlier uploads when needed.",
+    "arguments": {"attachment_ids": "array of allowed attachment ids", "instruction": "visual task"}
+  }
+}
