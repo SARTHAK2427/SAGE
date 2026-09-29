@@ -965,6 +965,12 @@ svg { display: block; flex-shrink: 0; }
   transition: color .15s, background .15s;
 }
 .iab:hover { color: var(--brand); background: var(--bg-hover); }
+.voice-input-btn.is-listening { color: #dc2626; background: rgba(220,38,38,.1); }
+.voice-input-btn.is-listening svg { animation: voiceMicPulse 1s ease-in-out infinite; }
+.voice-input-btn:disabled { cursor: wait; }
+.voice-input-status { color: #dc2626; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.voice-input-status[hidden] { display: none; }
+@keyframes voiceMicPulse { 50% { transform: scale(1.14); opacity: .65; } }
 
 .send-btn {
   width: 34px; height: 34px; border-radius: 50%;
@@ -1550,6 +1556,14 @@ svg { display: block; flex-shrink: 0; }
   background: rgba(255,255,255,.32);
   transform: translateY(-1px);
 }
+.chat-msg.sage .generated-files { display: grid; width: min(560px, 100%); gap: 7px; }
+.chat-msg.sage .generated-file { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card); }
+.generated-file-type { display: grid; min-width: 39px; height: 27px; place-items: center; padding: 0 5px; border-radius: 6px; background: rgba(24,175,197,.1); color: var(--brand); font: 800 9px/1 ui-monospace,monospace; }
+.generated-file-details { display: grid; min-width: 120px; flex: 1; gap: 2px; }
+.generated-file-details strong { overflow-wrap: anywhere; font-size: 11px; font-weight: 650; }
+.generated-file-details small { color: var(--tx3); font-size: 9px; }
+.generated-file-download,.generated-file-preview { border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; background: #fff; color: var(--tx2); font: 650 10px/1.1 inherit; text-decoration: none; cursor: pointer; }
+.generated-file-download:hover,.generated-file-preview:hover { border-color: var(--brand-lt); color: var(--brand); }
 
 /* Code */
 pre { background: #1a2e24; color: #b8f5d8; padding: 12px; border-radius: var(--r2); overflow-x: auto; font-size: 12px; line-height: 1.6; }

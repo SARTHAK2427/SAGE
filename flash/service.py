@@ -14,6 +14,10 @@ from typing import Any, Dict, List
 import config
 from core.observer import observer
 from flash.actions import IMAGE_TYPES, TEXT_TYPES, flash_action_executor, is_image_media_type
+from flash.artifact_generation import (
+    extract_pdf_text, fixed_pdf_workflow_names, matches_fixed_source_pdf,
+    references_pdf_transformation, requested_artifact_formats,
+)
 from flash.protocol import ACTION_NAMES, model_messages, parse_decision
 from flash.runtime_config import runtime_config
 from flash.transport import flash_transport
@@ -228,6 +232,11 @@ def _attachment_packet(records: List[Dict[str, Any]], current_ids: set[str], cur
         },
         "vision.inspect": {"available": bool(vision_ids), "allowed_attachment_ids": vision_ids,
                            "note": "Only image bytes belonging to this chat may be inspected."},
+        "artifact.generate": {
+            "available": True,
+            "formats": ["docx", "pptx", "pdf"],
+            "note": "Generate files only when the user explicitly requests a document or slide deck.",
+        },
     }
     return items, available
 
@@ -315,6 +324,36 @@ class FlashService:
         recalled_memory_ids.extend(legacy_ids)
         attachment_items, available_actions = _attachment_packet(all_attachments, current_ids, current_turn)
         attachment_reference = _attachment_reference(attachment_items, current_ids)
+        required_artifact_formats = requested_artifact_formats(objective)
+        fixed_pdf_workflow = None
+        fixed_pdf_source_error = None
+        fixed_names = fixed_pdf_workflow_names()
+        if fixed_names:
+            matching_upload = next((item for item in all_attachments
+                                    if matches_fixed_source_pdf(item.get("name", ""))), None)
+            source_is_current = bool(matching_upload and str(matching_upload.get("attachment_id") or "") in current_ids)
+            if matching_upload and not source_is_current and not references_pdf_transformation(objective):
+                matching_upload = None
+            if matching_upload:
+                source_path = str(matching_upload.get("storage_path") or "")
+                if not source_path and source_is_current:
+                    source_path = str((file_map.get(str(matching_upload.get("ref") or "")) or {}).get("path") or "")
+                try:
+                    source_text = extract_pdf_text(source_path) if source_path else ""
+                except Exception as exc:
+                    source_text = ""
+                    fixed_pdf_source_error = str(exc)
+                if source_text:
+                    fixed_pdf_workflow = {
+                        "source_filename": fixed_names[0],
+                        "output_filename": fixed_names[1],
+                        "source_text": source_text,
+                        "user_instruction": objective.strip()[:4000],
+                    }
+                    if "pdf" not in required_artifact_formats:
+                        required_artifact_formats.append("pdf")
+                elif not fixed_pdf_source_error:
+                    fixed_pdf_source_error = "No selectable text was found in the configured source PDF."
         selectable_actions = {
             name: {key: value for key, value in spec.items() if key != "available"}
             for name, spec in available_actions.items()
@@ -341,6 +380,10 @@ class FlashService:
             "attachment_reference": attachment_reference,
             "legacy_attachment_evidence": legacy_evidence or None,
             "available_actions": selectable_actions,
+            "required_artifact_generation": ({"formats": required_artifact_formats}
+                                               if required_artifact_formats else None),
+            "fixed_pdf_workflow": fixed_pdf_workflow,
+            "fixed_pdf_source_error": fixed_pdf_source_error,
             "missing_inputs": missing_inputs,
             "action_results": [],
             "execution": {"pass": 1, "actions_used": 0, "action_limit": MAX_ACTION_STEPS},
@@ -359,6 +402,7 @@ class FlashService:
         gemma_temperature = _role_temperature(temperature, 0.2)
         qwen_temperature = _role_temperature(temperature, 0.1)
         seen_actions: set[str] = set()
+        generated_files: List[Dict[str, Any]] = []
         answer = ""
         execution_path = "direct"
 
@@ -397,6 +441,25 @@ class FlashService:
 
             if decision.get("final"):
                 answer = str(decision.get("response") or "").strip()
+                generated_formats = {str(item.get("format") or "") for item in generated_files}
+                if required_artifact_formats and not set(required_artifact_formats).issubset(generated_formats):
+                    if pass_index >= MAX_ACTION_STEPS:
+                        answer = "I couldn't create the requested file. Please try again."
+                        execution_path = "artifact_generation_required"
+                        break
+                    answer = ""
+                    context["action_results"].append({
+                        "name": "artifact.generate", "status": "required",
+                        "error": {
+                            "code": "explicit_file_request",
+                            "message": "The user explicitly requested downloadable files. Call artifact.generate with exactly these formats: "
+                                       + ", ".join(required_artifact_formats)
+                                       + ". Put the complete requested content in the title, sections, or slides."
+                                       + (f" Set output_filename to {fixed_names[1]} for the configured source-PDF workflow."
+                                          if fixed_pdf_workflow and fixed_names else ""),
+                        },
+                    })
+                    continue
                 if answer:
                     break
                 context["action_results"].append({
@@ -424,6 +487,13 @@ class FlashService:
                     break
                 continue
 
+            if fixed_pdf_workflow and action.get("name") == "artifact.generate":
+                arguments = dict(action.get("arguments") or {})
+                arguments["output_filename"] = fixed_names[1]
+                formats = arguments.get("formats") if isinstance(arguments.get("formats"), list) else []
+                arguments["formats"] = list(dict.fromkeys([*formats, "pdf"]))
+                action = {**action, "arguments": arguments}
+
             seen_actions.add(signature)
             action_started = time.perf_counter()
             action_result = flash_action_executor.execute(
@@ -435,6 +505,18 @@ class FlashService:
             action_count += 1
             execution_path = str(action.get("name") or "action")
             context["action_results"].append(action_result)
+            if (required_artifact_formats and action.get("name") == "artifact.generate"
+                    and action_result.get("status") != "completed"):
+                error = action_result.get("error") or {}
+                detail = str(error.get("message") or "The file generator returned an error.")
+                answer = f"I couldn't create the requested file: {detail}"
+                break
+            action_result_data = action_result.get("result") if isinstance(action_result, dict) else None
+            if isinstance(action_result_data, dict):
+                generated_files.extend(
+                    item for item in action_result_data.get("generated_files", [])
+                    if isinstance(item, dict) and item.get("url")
+                )
             if action.get("name") in {"vision.inspect", "document.image.inspect"}:
                 qwen_seconds += float(((action_result.get("result") or {}).get("model_seconds") or 0))
             if (str(action.get("result_use") or "evidence") == "final"
@@ -446,6 +528,11 @@ class FlashService:
 
         if not answer:
             answer = "I could not produce a reliable answer from the available information."
+
+        for output_file in generated_files:
+            link = f"[Download {output_file['name']}]({output_file['url']})"
+            if link not in answer:
+                answer = f"{answer}\n\n{link}"
 
         memory_jobs: List[str] = []
         if save_history:
@@ -474,6 +561,7 @@ class FlashService:
             "memory_job": memory_jobs[0] if memory_jobs else None, "memory_jobs": memory_jobs,
             "recalled_memory_ids": recalled_memory_ids,
             "attachment_ids": [str(item.get("attachment_id") or "") for item in current_registered],
+            "generated_files": generated_files,
             "history_saved": bool(save_history),
             "telemetry": {
                 "mode": "flash", "gemma_seconds": round(gemma_seconds, 4),

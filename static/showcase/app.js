@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const sendBtn       = document.getElementById('sendBtn');
     const stopBtn       = document.getElementById('stopBtn');
     const attachBtn     = document.getElementById('attachBtn');
+    const voiceInputBtn = document.getElementById('voiceInputBtn');
+    const voiceInputStatus = document.getElementById('voiceInputStatus');
     const fileInput     = document.getElementById('fileInput');
     const attTray       = document.getElementById('attachmentsTray');
     const dropZone      = document.getElementById('dropZoneOverlay');
@@ -209,10 +211,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (actor === 'gemma' && phase === 'action_request') {
             if (['vision.inspect', 'document.image.inspect', 'document.search'].includes(actionName)) return null;
+            if (actionName === 'artifact.generate') return { key: `action:${event.payload?.action_id || event.sequence}`, label: 'Files', actorClass: 'knowledge', action: 'Creating requested files', detail: 'Building the requested downloadable format.' };
             return { key: `action:${event.payload?.action_id || event.sequence}`, label: 'Conversation', actorClass: 'knowledge', action: 'Retrieving earlier context', detail: 'Using a source available to this chat.' };
         }
         if (actor === 'sage' && phase === 'action_result') {
             if (['vision.inspect', 'document.image.inspect', 'document.search'].includes(actionName)) return null;
+            if (actionName === 'artifact.generate') return { key: `action:${event.payload?.action_id || event.sequence}`, label: 'Files', actorClass: 'knowledge', action: 'Files ready', detail: event.status === 'completed' ? 'The requested files are attached to SAGE’s reply.' : 'SAGE could not create the requested files.' };
             return { key: `action:${event.payload?.action_id || event.sequence}`, label: 'Conversation', actorClass: 'knowledge', action: 'Retrieving earlier context', detail: event.status === 'completed' ? 'Earlier context is ready.' : 'That source was unavailable; SAGE will recover.' };
         }
         if (actor === 'qwen' && ['model_input', 'model_output'].includes(phase)) {
@@ -2738,6 +2742,30 @@ document.addEventListener('DOMContentLoaded', () => {
     // FILES & ATTACHMENT PREVIEW (ChatGPT Style)
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     attachBtn.addEventListener('click', () => fileInput.click());
+    let mockVoiceTimer = null;
+    voiceInputBtn.addEventListener('click', () => {
+        if (mockVoiceTimer || isRunning) return;
+        voiceInputBtn.disabled = true;
+        voiceInputBtn.classList.add('is-listening');
+        voiceInputBtn.setAttribute('aria-pressed', 'true');
+        voiceInputBtn.setAttribute('aria-label', 'Listening');
+        voiceInputBtn.title = 'Listening…';
+        voiceInputStatus.hidden = false;
+
+        mockVoiceTimer = window.setTimeout(() => {
+            promptInput.value = 'hii my name is sarthak how will you help me';
+            promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+            promptInput.focus();
+            promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+            voiceInputBtn.disabled = false;
+            voiceInputBtn.classList.remove('is-listening');
+            voiceInputBtn.setAttribute('aria-pressed', 'false');
+            voiceInputBtn.setAttribute('aria-label', 'Start voice input demo');
+            voiceInputBtn.title = 'Voice input demo';
+            voiceInputStatus.hidden = true;
+            mockVoiceTimer = null;
+        }, 6000);
+    });
     fileInput.addEventListener('change', e => {
         handleFiles(Array.from(e.target.files));
         fileInput.value = '';
@@ -3624,7 +3652,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 // PROMPT RESULT IS READY -> MAKE THE CHATBOX GO DOWN NOW!
 
-                appendSageReply(data.answer, data.telemetry);
+                appendSageReply(data.answer, data.telemetry, data.generated_files || []);
                 rightPanelDone();
                 if (artifactGraph) {
                     artifactGraph.loadData();
@@ -3693,24 +3721,78 @@ document.addEventListener('DOMContentLoaded', () => {
         return msg;
     }
 
-    function appendSageReply(answer, telemetry) {
+    function appendSageReply(answer, telemetry, generatedFiles = []) {
         const msg = document.createElement('div'); msg.className = 'chat-msg sage fade-in';
         const hdr = document.createElement('div'); hdr.className = 'msg-hdr';
         const showTelemetry = uiSettings.telemetry && telemetry?.total_wall_time != null;
         const t = showTelemetry ? ' \u00B7 ' + Number(telemetry.total_wall_time).toFixed(1) + 's' : '';
         hdr.textContent = 'SAGE' + t;
         const bub = document.createElement('div'); bub.className = 'msg-bub';
-        bub.innerHTML = fmtMd(answer);
-        const actions = document.createElement('div'); actions.className = 'sage-message-actions';
-        const exportPdfBtn = document.createElement('button');
-        exportPdfBtn.type = 'button';
-        exportPdfBtn.className = 'export-pdf-btn';
-        exportPdfBtn.innerHTML = '<span>PDF</span> Export as PDF';
-        exportPdfBtn.addEventListener('click', () => exportReplyToCanvas(answer, exportPdfBtn));
-        actions.appendChild(exportPdfBtn);
-        msg.appendChild(hdr); msg.appendChild(bub); msg.appendChild(actions);
+        let visibleAnswer = String(answer || '');
+        generatedFiles.forEach(file => {
+            if (file?.name && file?.url) visibleAnswer = visibleAnswer.replace(`[Download ${file.name}](${file.url})`, '').trim();
+        });
+        bub.innerHTML = fmtMd(visibleAnswer);
+        if (generatedFiles.length) {
+            const files = document.createElement('div'); files.className = 'msg-files generated-files';
+            generatedFiles.forEach(file => {
+                if (!file || typeof file.url !== 'string' || !/^\/api\/chats\/[A-Za-z0-9_-]+\/generated\/artifact_[a-f0-9]{32}\.(docx|pptx|pdf)(?:\?filename=[A-Za-z0-9._%+-]+)?$/.test(file.url)) return;
+                const card = document.createElement('div'); card.className = 'generated-file';
+                const icon = document.createElement('span'); icon.className = 'generated-file-type'; icon.textContent = String(file.format || '').toUpperCase();
+                const details = document.createElement('div'); details.className = 'generated-file-details';
+                const name = document.createElement('strong'); name.textContent = file.name || `SAGE.${file.format || 'file'}`;
+                const meta = document.createElement('small');
+                meta.textContent = file.slides ? `${file.slides} slides` : file.pages ? `${file.pages} pages` : 'Generated for this chat';
+                details.append(name, meta);
+                const download = document.createElement('a'); download.href = file.url; download.download = file.name || `sage.${file.format}`;
+                download.className = 'generated-file-download'; download.textContent = 'Download';
+                card.append(icon, details, download);
+                if (file.format === 'pdf') {
+                    const preview = document.createElement('button'); preview.type = 'button';
+                    preview.className = 'generated-file-preview'; preview.textContent = 'Open in Canvas';
+                    preview.addEventListener('click', () => openGeneratedPdf(file));
+                    card.appendChild(preview);
+                }
+                files.appendChild(card);
+            });
+            if (files.childElementCount) bub.appendChild(files);
+        }
+        if (responseContainsCode(answer)) {
+            const actions = document.createElement('div'); actions.className = 'sage-message-actions';
+            const exportPdfBtn = document.createElement('button');
+            exportPdfBtn.type = 'button';
+            exportPdfBtn.className = 'export-pdf-btn';
+            exportPdfBtn.innerHTML = '<span>PDF</span> Export code as PDF';
+            exportPdfBtn.addEventListener('click', () => exportReplyToCanvas(answer, exportPdfBtn));
+            actions.appendChild(exportPdfBtn);
+            msg.appendChild(hdr); msg.appendChild(bub); msg.appendChild(actions);
+        } else {
+            msg.appendChild(hdr); msg.appendChild(bub);
+        }
         chatMessages.appendChild(msg);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function responseContainsCode(answer) {
+        const text = String(answer || '');
+        if (/```[^\r\n]*\r?\n(?=[\s\S]*?\S)[\s\S]*?```/.test(text)) return true;
+        const codeLike = text.split(/\r?\n/).filter(line =>
+            /^\s{4,}\S/.test(line) || /^\s*(?:#!|import\s|from\s+\S+\s+import\s|(?:async\s+)?def\s+|class\s+\w|function\s+\w|(?:const|let|var)\s+\w+\s*=|return\s+\S|#include\s|SELECT\s+.+\s+FROM\s|<\/?(?:html|script|div|body)\b)/i.test(line)
+        );
+        return codeLike.length >= 2;
+    }
+
+    async function openGeneratedPdf(file) {
+        try {
+            const response = await fetch(file.url);
+            if (!response.ok) throw new Error('Could not open the generated PDF.');
+            window.renderGeneratedPdf(await response.blob(), {
+                title: file.name || 'Generated PDF', pages: file.pages,
+                filename: file.name || 'sage-document.pdf'
+            });
+        } catch (error) {
+            appendError(error.message || 'Could not open the generated PDF.');
+        }
     }
     function appendError(err) {
         let safeError = String(err || 'Unknown error').trim();
@@ -3746,6 +3828,8 @@ document.addEventListener('DOMContentLoaded', () => {
         f = f.replace(/^### (.*$)/gim, '<h3>$1</h3>');
         f = f.replace(/^## (.*$)/gim,  '<h2>$1</h2>');
         f = f.replace(/^# (.*$)/gim,   '<h1>$1</h1>');
+        f = f.replace(/\[([^\]]+)\]\((\/api\/chats\/[A-Za-z0-9_-]+\/generated\/artifact_[a-f0-9]{32}\.(?:docx|pptx|pdf)(?:\?filename=[A-Za-z0-9._%+-]+)?)\)/g,
+            '<a href="$2" target="_blank" rel="noopener">$1</a>');
         f = f.replace(/\r?\n/g, '<br>');
         codeBlocks.forEach((block, index) => {
             f = f.replace(`@@SAGE_CODE_BLOCK_${index}@@`, block);

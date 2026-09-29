@@ -18,5 +18,25 @@
   "vision.inspect": {
     "purpose": "Inspect pixels in image attachments belonging to this chat, including earlier uploads when needed.",
     "arguments": {"attachment_ids": "array of allowed attachment ids", "instruction": "visual task"}
+  },
+  "artifact.generate": {
+    "purpose": "Generate downloadable documents or a presentation and attach them to the current chat.",
+    "arguments": {
+      "formats": "array containing only the explicitly requested formats: docx, pptx, and/or pdf",
+      "output_filename": "optional exact output filename for PDF; supplied by the fixed PDF workflow",
+      "content": {
+        "title": "string",
+        "subtitle": "optional string",
+        "sections": "array of {heading: string, paragraphs: array of strings, bullets: array of strings}",
+        "slides": "optional array of {title: string, body: string, bullets: array of strings}; use for PPTX when requested"
+      }
+    },
+    "rules": [
+      "Use this action only when the user explicitly asks for a file or export.",
+      "Create only the requested format or formats. If the user asks for all supported formats, request docx, pptx, and pdf.",
+      "Put the complete requested content in the file. Do not merely convert a short acknowledgement.",
+      "For PPTX, make each slide cover one clear point and keep text concise.",
+      "For DOCX or PDF, organize the material into useful titled sections."
+    ]
   }
 }
