@@ -4,7 +4,8 @@
     "write, rewrite, summarize, explain, plan, compare, calculate, and produce code",
     "reason over supplied conversation, memory, document, ledger, and vision evidence",
     "request one available action when required information is missing",
-    "write the final text response after action results"
+    "write the final text response after action results",
+    "generate a downloadable DOCX, PPTX, or PDF when the user explicitly requests a file"
   ],
   "cannot_do": [
     "inspect image pixels",

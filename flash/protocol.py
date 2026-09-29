@@ -15,6 +15,7 @@ ACTION_NAMES = {
     "document.search",
     "document.image.inspect",
     "vision.inspect",
+    "artifact.generate",
 }
 
 

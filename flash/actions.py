@@ -70,6 +70,8 @@ class FlashActionExecutor:
                 result = self._chat_ledger(arguments, chat_id)
             elif name == "document.search":
                 result = self._document_search(arguments, latest_user_message, attachments, run_id)
+            elif name == "artifact.generate":
+                result = self._generate_artifacts(arguments, chat_id, run_id)
             elif name == "document.image.inspect":
                 result = self._document_image(arguments, latest_user_message, attachments, run_id, temperature)
             elif name == "vision.inspect":
@@ -212,6 +214,19 @@ class FlashActionExecutor:
             "searched_attachment_ids": [str(item.get("attachment_id")) for item in selected],
             "records": bounded[:8], "count": min(len(bounded), 8),
         }
+
+    @staticmethod
+    def _generate_artifacts(arguments: Dict[str, Any], chat_id: str, run_id: str) -> Dict[str, Any]:
+        from flash.artifact_generation import generate_artifacts
+
+        observer.emit(run_id, "artifact", "generation", "started", "Preparing requested files", {
+            "formats": arguments.get("formats") or [],
+        })
+        files = generate_artifacts(request=arguments, chat_id=chat_id)
+        observer.emit(run_id, "artifact", "generation", "completed", "Generated requested files", {
+            "files": files,
+        })
+        return {"generated_files": files, "title": (arguments.get("content") or {}).get("title", "")}
 
     def _vision(self, arguments: Dict[str, Any], latest: str, attachments: List[Dict[str, Any]],
                 current_file_map: Dict[str, Dict[str, Any]], run_id: str,

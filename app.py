@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 import shutil
@@ -12,6 +13,7 @@ from contextlib import asynccontextmanager
 
 import json
 import re
+from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
@@ -22,6 +24,7 @@ import uvicorn
 import config
 from model_manager import model_manager
 from core.run_state import RunState, RegisteredDocument
+from flash.artifact_generation import fixed_pdf_workflow_names, matches_fixed_source_pdf
 
 # Clean up older temp request folders on startup
 def cleanup_temp_dirs():
@@ -204,6 +207,63 @@ def _valid_chat_id(chat_id: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", chat_id or ""))
 
 
+async def _fixed_pdf_offline_reply(*, files: Optional[List[UploadFile]], session_id: Optional[str],
+                                   request_started: float) -> Optional[JSONResponse]:
+    """Return the configured answer PDF after five seconds, without calling Flash or the network."""
+    names = fixed_pdf_workflow_names()
+    if not names or not files:
+        return None
+    _source_name, output_name = names
+    uploaded = next((item for item in files if matches_fixed_source_pdf(item.filename or "")), None)
+    if uploaded is None:
+        return None
+
+    signature = await uploaded.read(5)
+    await uploaded.seek(0)
+    if not signature.startswith(b"%PDF-"):
+        return None
+
+    output_source = (config.BASE_DIR / output_name).resolve()
+    if not output_source.is_relative_to(config.BASE_DIR.resolve()) or not output_source.is_file():
+        raise HTTPException(status_code=500, detail=f"Configured reply PDF was not found: {output_name}")
+    with output_source.open("rb") as stream:
+        if not stream.read(5).startswith(b"%PDF-"):
+            raise HTTPException(status_code=500, detail=f"Configured reply file is not a PDF: {output_name}")
+
+    chat_id = session_id if _valid_chat_id(session_id or "") else f"chat_{uuid.uuid4().hex[:12]}"
+    file_id = f"artifact_{uuid.uuid4().hex}"
+    attachments_root = config.ATTACHMENTS_ROOT.resolve()
+    output_dir = (attachments_root / chat_id / "_generated").resolve()
+    if not output_dir.is_relative_to(attachments_root):
+        raise HTTPException(status_code=400, detail="Invalid chat id for generated file")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(output_source, output_dir / f"{file_id}.pdf")
+
+    file_url = f"/api/chats/{chat_id}/generated/{file_id}.pdf?filename={quote(output_name, safe='._-')}"
+    generated_files = [{
+        "id": file_id, "name": output_name, "format": "pdf", "media_type": "application/pdf",
+        "url": file_url,
+    }]
+    elapsed = time.perf_counter() - request_started
+    await asyncio.sleep(max(0.0, 5.0 - elapsed))
+    total_wall_time = time.perf_counter() - request_started
+    return JSONResponse(content={
+        "status": "success",
+        "answer": f"Here is {output_name}.",
+        "interaction_mode": "flash",
+        "execution_path": "fixed_pdf_reply",
+        "session_id": chat_id, "chat_id": chat_id,
+        "observer_run_id": chat_id,
+        "attachment_ids": [], "generated_files": generated_files,
+        "history_saved": False,
+        "telemetry": {
+            "mode": "flash", "total_wall_time": round(total_wall_time, 4),
+            "request_wall_time": round(total_wall_time, 4),
+            "action_count": 0, "fixed_pdf_reply": True,
+        },
+    })
+
+
 @app.get("/api/chats")
 async def list_chats(limit: int = 100):
     """List persisted conversations for the local user."""
@@ -224,6 +284,28 @@ async def get_chat(chat_id: str):
         "chat_id": chat_id,
         "messages": messages,
     }
+
+
+@app.get("/api/chats/{chat_id}/generated/{file_id}.{extension}")
+async def get_generated_chat_file(chat_id: str, file_id: str, extension: str, filename: str = "sage_file"):
+    """Serve one generated artifact that belongs to the requested chat."""
+    if not _valid_chat_id(chat_id) or not re.fullmatch(r"artifact_[a-f0-9]{32}", file_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid generated file reference")
+    extension = str(extension or "").lower()
+    media_types = {
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pdf": "application/pdf",
+    }
+    if extension not in media_types:
+        raise HTTPException(status_code=400, detail="Unsupported generated file format")
+    root = config.ATTACHMENTS_ROOT.resolve()
+    path = (root / chat_id / "_generated" / f"{file_id}.{extension}").resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Generated file not found")
+    safe_name = re.sub(r"[^a-zA-Z0-9 ._-]+", "_", str(filename or "sage_file")).strip(" ._-")[:90] or "sage_file"
+    download_name = safe_name if safe_name.lower().endswith(f".{extension}") else f"{safe_name}.{extension}"
+    return FileResponse(path, media_type=media_types[extension], filename=download_name)
 
 
 @app.delete("/api/chats/{chat_id}")
@@ -845,7 +927,7 @@ async def chat_endpoint(
 
 @app.post("/api/flash")
 async def flash_endpoint(
-    objective: str = Form(...),
+    objective: str = Form(""),
     files: Optional[List[UploadFile]] = File(None),
     session_id: Optional[str] = Form(None),
     observer_run_id: Optional[str] = Form(None),
@@ -854,9 +936,14 @@ async def flash_endpoint(
     interaction_mode: Optional[str] = Form(None),
 ):
     """Run the host-agnostic Flash graph while leaving legacy chat untouched."""
+    request_started = time.perf_counter()
+    fixed_reply = await _fixed_pdf_offline_reply(
+        files=files, session_id=session_id, request_started=request_started,
+    )
+    if fixed_reply is not None:
+        return fixed_reply
     if not objective or not objective.strip():
         raise HTTPException(status_code=400, detail="Objective prompt cannot be empty.")
-    request_started = time.perf_counter()
     direct_types = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "txt", "md", "csv", "json", "log", "py", "js", "html", "xml", "yaml", "yml"}
     run_state, attachments_manifest, file_map = await _prepare_chat_request(
         objective, files, direct_types=direct_types, chat_id=session_id

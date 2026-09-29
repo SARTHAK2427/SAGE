@@ -16,6 +16,9 @@ pydantic>=2.0.0
 # ── Document Parsing (Docling & Fallbacks) ───────────────────────────────────
 # Kept for compatibility and fallback during migration
 python-docx>=1.1.0
+python-pptx>=1.0.2
+reportlab>=4.2.0
+pypdf>=5.0.0
 # docling>=2.0.0  # Optional heavy document parser
 
 # Test runner used by the repository verification suite
